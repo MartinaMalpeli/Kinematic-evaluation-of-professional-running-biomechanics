@@ -1,0 +1,2334 @@
+clear
+clc
+close all
+
+freq_imu = 60;
+dt = 1/freq_imu;
+
+freq_emg = 1000;
+dt_emg = 1/freq_emg;
+
+vel = 3.62; %[m/s]
+
+%% ===== data loading =====
+joint_angles_zxy = readmatrix("subj5-001.xlsx",'Sheet','Joint Angles ZXY');
+r_knee_ext_flex = joint_angles_zxy(1:end,49);
+t = 0:dt:(length(r_knee_ext_flex)-1)*dt;
+l_knee_ext_flex = joint_angles_zxy(1:end,61);
+r_knee_int_ext_rot = joint_angles_zxy(1:end,48);
+l_knee_int_ext_rot = joint_angles_zxy(1:end,60);
+r_knee_ad_abd = joint_angles_zxy(1:end,47);
+l_knee_ad_abd = joint_angles_zxy(1:end,59);
+r_hip_ext_flex = joint_angles_zxy(1:end,46);
+l_hip_ext_flex = joint_angles_zxy(1:end,58);
+r_hip_int_ext_rot = joint_angles_zxy(1:end,45);
+l_hip_int_ext_rot = joint_angles_zxy(1:end,57);
+r_hip_ad_abd = joint_angles_zxy(1:end,44);
+l_hip_ad_abd = joint_angles_zxy(1:end,56);
+r_ankle_ext_flex = joint_angles_zxy(1:end,52);
+l_ankle_ext_flex = joint_angles_zxy(1:end,64);
+
+segment_orientation = readmatrix("subj5-001.xlsx",'Sheet','Segment Orientation - Euler');
+pelv_tilt = segment_orientation(1:end,2);
+
+segment_position = readmatrix("subj5-001.xlsx",'Sheet','Segment Position');
+r_foot_vert = segment_position(1:end,55);
+l_foot_vert = segment_position(1:end,67);
+pelv_vert = segment_position(1:end,4);
+
+center_of_mass = readmatrix("subj5-001.xlsx",'Sheet','Center of Mass');
+z_com = center_of_mass(1:end,4);
+ap_acc_com = center_of_mass(1:end,8);
+ml_acc_com = center_of_mass(1:end,9);
+
+ta_sx_mvc = readmatrix("TASX_subj5_uv.emt",'FileType','text');
+ta_dx_mvc = readmatrix("TADX_subj5_uv.emt",'FileType','text');
+rf_sx_mvc = readmatrix("RFSX_subj5_uv.emt",'FileType','text');
+rf_dx_mvc = readmatrix("RFDX_subj5_uv.emt",'FileType','text');
+bf_sx_mvc = readmatrix("BFSX_subj5_uv.emt",'FileType','text');
+bf_dx_mvc = readmatrix("BFDX_subj5_uv.emt",'FileType','text');
+gc_mvc = readmatrix("GC_subj5_uv.emt",'FileType','text');
+
+emg = readmatrix("test1_subj5_uv.emt","FileType","text");
+t_emg = emg(1:end,2);
+ta_sx_raw = emg(1:end,4);
+ta_dx_raw = emg(1:end,3);
+gc_sx_raw = emg(1:end,8);
+gc_dx_raw = emg(1:end,7);
+rf_sx_raw = emg(1:end,6);
+rf_dx_raw = emg(1:end,5);
+bf_sx_raw = emg(1:end,10);
+bf_dx_raw = emg(1:end,9);
+
+
+
+%% ===== maximal voluntary contractions =====
+
+% plot dei dati grezzi 
+figure
+subplot(4,2,1)
+t_ta_sx = ta_sx_mvc(1:end,2);
+ta_sx_mvc = ta_sx_mvc(1:end,4);
+plot(t_ta_sx,ta_sx_mvc)
+xlabel('time [s]')
+ylabel('voltage [µv]')
+title('Left Tibialis Anterior')
+
+subplot(4,2,2)
+t_ta_dx = ta_dx_mvc(1:end,2);
+ta_dx_mvc = ta_dx_mvc(1:end,3);
+plot(t_ta_dx,ta_dx_mvc)
+xlabel('time [s]')
+ylabel('voltage [µv]')
+title('Right Tibialis Anterior')
+
+subplot(4,2,3)
+t_gc = gc_mvc(1:end,2);
+gc_sx_mvc = gc_mvc(1:end,8);
+plot(t_gc,gc_sx_mvc)
+xlabel('time [s]')
+ylabel('voltage [µv]')
+title('Left Gastrocnemius Medialis')
+
+subplot(4,2,4)
+gc_dx_mvc = gc_mvc(1:end,7);
+plot(t_gc,gc_dx_mvc)
+xlabel('time [s]')
+ylabel('voltage [µv]')
+title('Right Gastrocnemius Medialis')
+
+subplot(4,2,5)
+t_rf_sx = rf_sx_mvc(1:end,2);
+rf_sx_mvc = rf_sx_mvc(1:end,6);
+plot(t_rf_sx,rf_sx_mvc)
+xlabel('time [s]')
+ylabel('voltage [µv]')
+title('Left Rectus Femoris')
+
+subplot(4,2,6)
+t_rf_dx = rf_dx_mvc(1:end,2);
+rf_dx_mvc = rf_dx_mvc(1:end,5);
+plot(t_rf_dx,rf_dx_mvc)
+xlabel('time [s]')
+ylabel('voltage [µv]')
+title('Right Rectus Femoris')
+
+subplot(4,2,7)
+t_bf_sx = bf_sx_mvc(1:end,2);
+bf_sx_mvc = bf_sx_mvc(1:end,10);
+plot(t_bf_sx,bf_sx_mvc)
+xlabel('time [s]')
+ylabel('voltage [µv]')
+title('Left Biceps Femoris Caput Longus')
+
+subplot(4,2,8)
+t_bf_dx = bf_dx_mvc(1:end,2);
+bf_dx_mvc = bf_dx_mvc(1:end,9);
+plot(t_bf_dx,bf_dx_mvc)
+xlabel('time [s]')
+ylabel('voltage [µv]')
+title('Right Biceps Femoris Caput Longus')
+sgtitle('Maximal Voluntary Contractions (raw)')
+
+% signal filtering
+% filtro bandpass
+butter_order = 4;
+butter_high_pass = 15;
+butter_low_pass = 450;
+[b,a] = butter(butter_order,[butter_high_pass butter_low_pass]/(freq_emg/2),'bandpass');
+ta_sx_mvc = filtfilt(b,a,ta_sx_mvc);
+ta_dx_mvc = filtfilt(b,a,ta_dx_mvc);
+gc_sx_mvc = filtfilt(b,a,gc_sx_mvc);
+gc_dx_mvc = filtfilt(b,a,gc_dx_mvc);
+rf_sx_mvc = filtfilt(b,a,rf_sx_mvc);
+rf_dx_mvc = filtfilt(b,a,rf_dx_mvc);
+bf_sx_mvc = filtfilt(b,a,bf_sx_mvc);
+bf_dx_mvc = filtfilt(b,a,bf_dx_mvc);
+
+% rettiffica
+ta_sx_mvc = abs(ta_sx_mvc);
+ta_dx_mvc = abs(ta_dx_mvc);
+gc_sx_mvc = abs(gc_sx_mvc);
+gc_dx_mvc = abs(gc_dx_mvc);
+rf_sx_mvc = abs(rf_sx_mvc);
+rf_dx_mvc = abs(rf_dx_mvc);
+bf_sx_mvc = abs(bf_sx_mvc);
+bf_dx_mvc = abs(bf_dx_mvc);
+
+% envelope con filtro passa basso
+butter_order = 4;
+butter_low_pass = 6;
+[b,a] = butter(butter_order, butter_low_pass/(freq_emg/2),'low');
+ta_sx_mvc = filtfilt(b,a,ta_sx_mvc);
+ta_dx_mvc = filtfilt(b,a,ta_dx_mvc);
+gc_sx_mvc = filtfilt(b,a,gc_sx_mvc);
+gc_dx_mvc = filtfilt(b,a,gc_dx_mvc);
+rf_sx_mvc = filtfilt(b,a,rf_sx_mvc);
+rf_dx_mvc = filtfilt(b,a,rf_dx_mvc);
+bf_sx_mvc = filtfilt(b,a,bf_sx_mvc);
+bf_dx_mvc = filtfilt(b,a,bf_dx_mvc);
+
+ta_sx_mvc = movmean(ta_sx_mvc,500);
+ta_dx_mvc = movmean(ta_dx_mvc,500);
+gc_sx_mvc = movmean(gc_sx_mvc,500);
+gc_dx_mvc = movmean(gc_dx_mvc,500);
+rf_sx_mvc = movmean(rf_sx_mvc,500);
+rf_dx_mvc = movmean(rf_dx_mvc,500);
+bf_sx_mvc = movmean(bf_sx_mvc,500);
+bf_dx_mvc = movmean(bf_dx_mvc,500);
+
+max_ta_sx = max(ta_sx_mvc);
+max_ta_dx = max(ta_dx_mvc);
+max_gc_sx = max(gc_sx_mvc);
+max_gc_dx = max(gc_dx_mvc);
+max_rf_sx = max(rf_sx_mvc);
+max_rf_dx = max(rf_dx_mvc);
+max_bf_sx = max(bf_sx_mvc);
+max_bf_dx = max(bf_dx_mvc);
+
+%plot dei dati processati
+figure
+subplot(4,2,1)
+plot(t_ta_sx,ta_sx_mvc)
+xlabel('time [s]')
+ylabel('voltage [µv]')
+title('Left Tibialis Anterior')
+
+subplot(4,2,2)
+plot(t_ta_dx,ta_dx_mvc)
+xlabel('time [s]')
+ylabel('voltage [µv]')
+title('Right Tibialis Anterior')
+
+subplot(4,2,3)
+plot(t_gc,gc_sx_mvc)
+xlabel('time [s]')
+ylabel('voltage [µv]')
+title('Left Gastrocnemius Medialis')
+
+subplot(4,2,4)
+plot(t_gc,gc_dx_mvc)
+xlabel('time [s]')
+ylabel('voltage [µv]')
+title('Right Gastrocnemius Medialis')
+
+subplot(4,2,5)
+plot(t_rf_sx,rf_sx_mvc)
+xlabel('time [s]')
+ylabel('voltage [µv]')
+title('Left Rectus Femoris')
+
+subplot(4,2,6)
+plot(t_rf_dx,rf_dx_mvc)
+xlabel('time [s]')
+ylabel('voltage [µv]')
+title('Right Rectus Femoris')
+
+subplot(4,2,7)
+plot(t_bf_sx,bf_sx_mvc)
+xlabel('time [s]')
+ylabel('voltage [µv]')
+title('Left Biceps Femoris Caput Longus')
+
+subplot(4,2,8)
+plot(t_bf_dx,bf_dx_mvc)
+xlabel('time [s]')
+ylabel('voltage [µv]')
+title('Right Biceps Femoris Caput Longus')
+sgtitle('Maximal Voluntary Contractions (normalized)')
+
+
+
+%% ===== emg plot and gait selection =====
+
+% signal filtering
+% filtro bandpass
+butter_order = 4;
+butter_high_pass = 15;
+butter_low_pass = 450;
+[b,a] = butter(butter_order,[butter_high_pass butter_low_pass]/(freq_emg/2),'bandpass');
+ta_sx = filtfilt(b,a,ta_sx_raw);
+ta_dx = filtfilt(b,a,ta_dx_raw);
+gc_sx = filtfilt(b,a,gc_sx_raw);
+gc_dx = filtfilt(b,a,gc_dx_raw);
+rf_sx = filtfilt(b,a,rf_sx_raw);
+rf_dx = filtfilt(b,a,rf_dx_raw);
+bf_sx = filtfilt(b,a,bf_sx_raw);
+bf_dx = filtfilt(b,a,bf_dx_raw);
+
+% rettiffica
+ta_sx = abs(ta_sx);
+ta_dx = abs(ta_dx);
+gc_sx = abs(gc_sx);
+gc_dx = abs(gc_dx);
+rf_sx = abs(rf_sx);
+rf_dx = abs(rf_dx);
+bf_sx = abs(bf_sx);
+bf_dx = abs(bf_dx);
+
+% envelope con filtro passa basso
+butter_order = 4;
+butter_low_pass = 6;
+[b,a] = butter(butter_order, butter_low_pass/(freq_emg/2),'low');
+ta_sx = filtfilt(b,a,ta_sx);
+ta_dx = filtfilt(b,a,ta_dx);
+gc_sx = filtfilt(b,a,gc_sx);
+gc_dx = filtfilt(b,a,gc_dx);
+rf_sx = filtfilt(b,a,rf_sx);
+rf_dx = filtfilt(b,a,rf_dx);
+bf_sx = filtfilt(b,a,bf_sx);
+bf_dx = filtfilt(b,a,bf_dx);
+
+figure(3)
+subplot(5,2,1)
+hold on
+plot(t_emg,ta_sx_raw./max_ta_sx,'LineWidth',0.5,'Color',[0.65 0.75 1])
+plot(t_emg,ta_sx./max_ta_sx,'LineWidth',1,'Color',[0 0.3 0.7])
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Left Tibialis Anterior')
+
+subplot(5,2,2)
+hold on
+plot(t_emg,ta_dx_raw./max_ta_dx,'LineWidth',0.5,'Color',[0.65 0.75 1])
+plot(t_emg,ta_dx./max_ta_dx,'LineWidth',1,'Color',[0 0.3 0.7])
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Right Tibialis Anterior')
+
+subplot(5,2,3)
+hold on
+plot(t_emg,gc_sx_raw./max_gc_sx,'LineWidth',0.5,'Color',[0.65 0.75 1])
+plot(t_emg,gc_sx./max_gc_sx,'LineWidth',1,'Color',[0 0.3 0.7])
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Left Gastrocnemius Medialis')
+
+subplot(5,2,4)
+hold on
+plot(t_emg,gc_dx_raw./max_gc_dx,'LineWidth',0.5,'Color',[0.65 0.75 1])
+plot(t_emg,gc_dx./max_gc_dx,'LineWidth',1,'Color',[0 0.3 0.7])
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Right Gastrocnemius Medialis')
+
+subplot(5,2,5)
+hold on
+plot(t_emg,rf_sx_raw./max_rf_sx,'LineWidth',0.5,'Color',[0.65 0.75 1])
+plot(t_emg,rf_sx./max_rf_sx,'LineWidth',1,'Color',[0 0.3 0.7])
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Left Rectus Femoris')
+
+subplot(5,2,6)
+hold on
+plot(t_emg,rf_dx_raw./max_rf_dx,'LineWidth',0.5,'Color',[0.65 0.75 1])
+plot(t_emg,rf_dx./max_rf_dx,'LineWidth',1,'Color',[0 0.3 0.7])
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Right Rectus Femoris')
+
+subplot(5,2,7)
+hold on
+plot(t_emg,bf_sx_raw./max_bf_sx,'LineWidth',0.5,'Color',[0.65 0.75 1])
+plot(t_emg,bf_sx./max_bf_sx,'LineWidth',1,'Color',[0 0.3 0.7])
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Left Biceps Femoris Caput Longus')
+
+subplot(5,2,8)
+hold on
+plot(t_emg,bf_dx_raw./max_bf_dx,'LineWidth',0.5,'Color',[0.65 0.75 1])
+plot(t_emg,bf_dx./max_bf_dx,'LineWidth',1,'Color',[0 0.3 0.7])
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Right Biceps Femoris Caput Longus')
+
+subplot(5,2,9)
+plot(t,l_knee_ext_flex,'Color',[0.85 0.33 0.1])
+xlabel('time [s]')
+ylabel('angle [deg]')
+title('Left Knee Flexion-Extension')
+
+subplot(5,2,10)
+plot(t,r_knee_ext_flex,'Color',[0.85 0.33 0.1])
+xlabel('time [s]')
+ylabel('angle [deg]')
+title('Right Knee Flexion-Extension')
+
+
+
+%% ------- sync -------
+% plot per sincronizzare, commenta dopo aver scelto tempo per sincronizzare
+delay = -0.9125;
+t_emg = t_emg + delay;
+figure
+a(1)=subplot(2,1,1);
+hold on
+plot(t_emg,gc_dx_raw./max_gc_dx,'LineWidth',0.5,'Color',[0.65 0.75 1])
+plot(t_emg,gc_dx./max_gc_dx,'LineWidth',1,'Color',[0 0.3 0.7])
+xlabel('time [s]')
+ylabel('activation [%]')
+xlim([t(end)-6 t(end)-4])
+title('Left Gastrocnemius Medialis')
+
+a(2)=subplot(2,1,2);
+plot(t,pelv_vert)
+xlabel('time [s]')
+ylabel('position [m]')
+title('Pelvis Vertical Position')
+xlim([t(end)-6 t(end)-4])
+linkaxes(a,'x')
+
+
+
+
+
+%% ------- lato sx -------
+%--------------------------------------------------------------------------
+% parte iniziale
+%--------------------------------------------------------------------------
+figure(4)
+a(1)=subplot(5,1,1);
+hold on
+plot(t_emg,ta_sx_raw./max_ta_sx,'LineWidth',0.5,'Color',[0.65 0.75 1])
+plot(t_emg,ta_sx./max_ta_sx,'LineWidth',1,'Color',[0 0.3 0.7])
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Left Tibialis Anterior')
+
+a(2)=subplot(5,1,2);
+hold on
+plot(t_emg,gc_sx_raw./max_gc_sx,'LineWidth',0.5,'Color',[0.65 0.75 1])
+plot(t_emg,gc_sx./max_gc_sx,'LineWidth',1,'Color',[0 0.3 0.7])
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Left Gastrocnemius Medialis')
+
+a(3)=subplot(5,1,3);
+hold on
+plot(t_emg,rf_sx_raw./max_rf_sx,'LineWidth',0.5,'Color',[0.65 0.75 1])
+plot(t_emg,rf_sx./max_rf_sx,'LineWidth',1,'Color',[0 0.3 0.7])
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Left Rectus Femoris')
+
+a(4)=subplot(5,1,4);
+hold on
+plot(t_emg,bf_sx_raw./max_bf_sx,'LineWidth',0.5,'Color',[0.65 0.75 1])
+plot(t_emg,bf_sx./max_bf_sx,'LineWidth',1,'Color',[0 0.3 0.7])
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Left Biceps Femoris Caput Longus')
+
+a(5)=subplot(5,1,5);
+plot(t,l_knee_ext_flex,'Color',[0.85 0.33 0.1])
+xlabel('time [s]')
+ylabel('position')
+title('Left Knee Flexion-Extension')
+linkaxes(a,'x')
+
+figure(4)
+h = msgbox('Selezione di inizio e fine gait in tratto iniziale (sx)','Avviso');
+uiwait(h);
+[tx,~]=ginput(2);
+t_A = tx(1); 
+t_B = tx(2);
+if t_A > t_B
+      t_start = t_B;
+      t_end = t_A;
+else
+      t_start = t_A;
+      t_end = t_B;
+end
+ind_start = find(t_emg>=t_start);
+ind_end = find(t_emg<=t_end);
+ta_sx_wind_1 = ta_sx(ind_start(1):ind_end(end));
+gc_sx_wind_1 = gc_sx(ind_start(1):ind_end(end));
+rf_sx_wind_1 = rf_sx(ind_start(1):ind_end(end));
+bf_sx_wind_1 = bf_sx(ind_start(1):ind_end(end));
+t_emg_wind_sx_1 = t_emg(ind_start(1):ind_end(end));
+
+ind_start = find(t>=t_start);
+ind_end = find(t<=t_end);
+l_knee_ext_flex_wind_1 = l_knee_ext_flex(ind_start(1):ind_end(end));
+l_knee_int_ext_rot_wind_1 = l_knee_int_ext_rot(ind_start(1):ind_end(end));
+l_knee_ad_abd_wind_1 = l_knee_ad_abd(ind_start(1):ind_end(end));
+l_hip_ext_flex_wind_1 = l_hip_ext_flex(ind_start(1):ind_end(end));
+l_hip_int_ext_rot_wind_1 = l_hip_int_ext_rot(ind_start(1):ind_end(end));
+l_hip_ad_abd_wind_1 = l_hip_ad_abd(ind_start(1):ind_end(end));
+l_ankle_ext_flex_wind_1 = l_ankle_ext_flex(ind_start(1):ind_end(end));
+l_foot_vert_wind_1 = l_foot_vert(ind_start(1):ind_end(end));
+z_com_wind_1 = z_com(ind_start(1):ind_end(end));
+pelv_tilt_wind_1 = pelv_tilt(ind_start(1):ind_end(end));
+t_l_wind_1 = t(ind_start(1):ind_end(end));
+
+figure(5)
+a(1)=subplot(5,1,1);
+plot(t_emg_wind_sx_1,ta_sx_wind_1./max_ta_sx)
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Left Tibialis Anterior')
+
+a(2)=subplot(5,1,2);
+plot(t_emg_wind_sx_1,gc_sx_wind_1./max_gc_sx)
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Left Gastrocnemius Medialis')
+
+a(3)=subplot(5,1,3);
+plot(t_emg_wind_sx_1,rf_sx_wind_1./max_rf_sx)
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Left Rectus Femoris')
+
+a(4)=subplot(5,1,4);
+plot(t_emg_wind_sx_1,bf_sx_wind_1./max_bf_sx)
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Left Biceps Femoris Caput Longus')
+
+a(5)=subplot(5,1,5);
+plot(t_l_wind_1,l_knee_ext_flex_wind_1,'Color',[0.85 0.33 0.1])
+xlabel('time [s]')
+ylabel('position')
+title('Left Knee Flexion-Extension')
+linkaxes(a,'x')
+
+h = msgbox('selezione (in ordine) inizio/fine gait e takeoff in mezzo (sx)','Avviso');
+uiwait(h);
+figure(5)
+[tx,~]=ginput(3);
+t_start = tx(1);
+t_end = tx(end);
+t_toff_sx_wind_1 = tx(2);
+t_sx(1) = tx(end)-tx(1);
+
+ind_start = find(t_emg_wind_sx_1>=t_start);
+ind_end = find(t_emg_wind_sx_1<=t_end);
+ta_sx_wind_1 = ta_sx_wind_1(ind_start(1):ind_end(end));
+gc_sx_wind_1 = gc_sx_wind_1(ind_start(1):ind_end(end));
+rf_sx_wind_1 = rf_sx_wind_1(ind_start(1):ind_end(end));
+bf_sx_wind_1 = bf_sx_wind_1(ind_start(1):ind_end(end));
+t_emg_wind_sx_1 = t_emg_wind_sx_1(ind_start(1):ind_end(end));
+
+ind_start = find(t_l_wind_1>=t_start);
+ind_end = find(t_l_wind_1<=t_end);
+l_knee_ext_flex_wind_1 = l_knee_ext_flex_wind_1(ind_start(1):ind_end(end));
+l_knee_int_ext_rot_wind_1 = l_knee_int_ext_rot_wind_1(ind_start(1):ind_end(end));
+l_knee_ad_abd_wind_1 = l_knee_ad_abd_wind_1(ind_start(1):ind_end(end));
+l_hip_ext_flex_wind_1 = l_hip_ext_flex_wind_1(ind_start(1):ind_end(end));
+l_hip_int_ext_rot_wind_1 = l_hip_int_ext_rot_wind_1(ind_start(1):ind_end(end));
+l_hip_ad_abd_wind_1 = l_hip_ad_abd_wind_1(ind_start(1):ind_end(end));
+l_ankle_ext_flex_wind_1 = l_ankle_ext_flex_wind_1(ind_start(1):ind_end(end));
+l_foot_vert_wind_1 = l_foot_vert_wind_1(ind_start(1):ind_end(end));
+z_com_wind_1 = z_com_wind_1(ind_start(1):ind_end(end));
+pelv_tilt_wind_1 = pelv_tilt_wind_1(ind_start(1):ind_end(end));
+t_l_wind_1 = t_l_wind_1(ind_start(1):ind_end(end));
+
+%--------------------------------------------------------------------------
+%parte intermedia
+%--------------------------------------------------------------------------
+figure(6)
+a(1)=subplot(5,1,1);
+hold on
+plot(t_emg,ta_sx_raw./max_ta_sx,'LineWidth',0.5,'Color',[0.65 0.75 1])
+plot(t_emg,ta_sx./max_ta_sx,'LineWidth',1,'Color',[0 0.3 0.7])
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Left Tibialis Anterior')
+
+a(2)=subplot(5,1,2);
+hold on
+plot(t_emg,gc_sx_raw./max_gc_sx,'LineWidth',0.5,'Color',[0.65 0.75 1])
+plot(t_emg,gc_sx./max_gc_sx,'LineWidth',1,'Color',[0 0.3 0.7])
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Left Gastrocnemius Medialis')
+
+a(3)=subplot(5,1,3);
+hold on
+plot(t_emg,rf_sx_raw./max_rf_sx,'LineWidth',0.5,'Color',[0.65 0.75 1])
+plot(t_emg,rf_sx./max_rf_sx,'LineWidth',1,'Color',[0 0.3 0.7])
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Left Rectus Femoris')
+
+a(4)=subplot(5,1,4);
+hold on
+plot(t_emg,bf_sx_raw./max_bf_sx,'LineWidth',0.5,'Color',[0.65 0.75 1])
+plot(t_emg,bf_sx./max_bf_sx,'LineWidth',1,'Color',[0 0.3 0.7])
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Left Biceps Femoris Caput Longus')
+
+a(5)=subplot(5,1,5);
+plot(t,l_knee_ext_flex,'Color',[0.85 0.33 0.1])
+xlabel('time [s]')
+ylabel('position')
+title('Left Knee Flexion-Extension')
+linkaxes(a,'x')
+
+figure(6)
+h = msgbox('Selezione di inizio e fine di tratto per gait intermedio (sx)','Avviso');
+uiwait(h);
+[tx,~]=ginput(2);
+t_A = tx(1); 
+t_B = tx(2);
+if t_A > t_B
+      t_start = t_B;
+      t_end = t_A;
+else
+      t_start = t_A;
+      t_end = t_B;
+end
+ind_start = find(t_emg>=t_start);
+ind_end = find(t_emg<=t_end);
+ta_sx_wind_2 = ta_sx(ind_start(1):ind_end(end));
+gc_sx_wind_2 = gc_sx(ind_start(1):ind_end(end));
+rf_sx_wind_2 = rf_sx(ind_start(1):ind_end(end));
+bf_sx_wind_2 = bf_sx(ind_start(1):ind_end(end));
+t_emg_wind_sx_2 = t_emg(ind_start(1):ind_end(end));
+
+ind_start = find(t>=t_start);
+ind_end = find(t<=t_end);
+l_knee_ext_flex_wind_2 = l_knee_ext_flex(ind_start(1):ind_end(end));
+l_knee_int_ext_rot_wind_2 = l_knee_int_ext_rot(ind_start(1):ind_end(end));
+l_knee_ad_abd_wind_2 = l_knee_ad_abd(ind_start(1):ind_end(end));
+l_hip_ext_flex_wind_2 = l_hip_ext_flex(ind_start(1):ind_end(end));
+l_hip_int_ext_rot_wind_2 = l_hip_int_ext_rot(ind_start(1):ind_end(end));
+l_hip_ad_abd_wind_2 = l_hip_ad_abd(ind_start(1):ind_end(end));
+l_ankle_ext_flex_wind_2 = l_ankle_ext_flex(ind_start(1):ind_end(end));
+l_foot_vert_wind_2 = l_foot_vert(ind_start(1):ind_end(end));
+z_com_wind_2 = z_com(ind_start(1):ind_end(end));
+pelv_tilt_wind_2 = pelv_tilt(ind_start(1):ind_end(end));
+t_l_wind_2 = t(ind_start(1):ind_end(end));
+
+figure(7)
+a(1)=subplot(5,1,1);
+plot(t_emg_wind_sx_2,ta_sx_wind_2./max_ta_sx)
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Left Tibialis Anterior')
+
+a(2)=subplot(5,1,2);
+plot(t_emg_wind_sx_2,gc_sx_wind_2./max_gc_sx)
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Left Gastrocnemius Medialis')
+
+a(3)=subplot(5,1,3);
+plot(t_emg_wind_sx_2,rf_sx_wind_2./max_rf_sx)
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Left Rectus Femoris')
+
+a(4)=subplot(5,1,4);
+plot(t_emg_wind_sx_2,bf_sx_wind_2./max_bf_sx)
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Left Biceps Femoris Caput Longus')
+
+a(5)=subplot(5,1,5);
+plot(t_l_wind_2,l_knee_ext_flex_wind_2,'Color',[0.85 0.33 0.1])
+xlabel('time [s]')
+ylabel('position')
+title('Left Knee Flexion-Extension')
+linkaxes(a,'x')
+
+h = msgbox('selezione (in ordine) inizio/fine gait e takeoff in mezzo (sx)','Avviso');
+uiwait(h);
+figure(7)
+[tx,~]=ginput(3);
+t_start = tx(1);
+t_end = tx(end);
+t_toff_sx_wind_2 = tx(2);
+t_sx(2) = tx(end)-tx(1);
+
+ind_start = find(t_emg_wind_sx_2>=t_start);
+ind_end = find(t_emg_wind_sx_2<=t_end);
+ta_sx_wind_2 = ta_sx_wind_2(ind_start(1):ind_end(end));
+gc_sx_wind_2 = gc_sx_wind_2(ind_start(1):ind_end(end));
+rf_sx_wind_2 = rf_sx_wind_2(ind_start(1):ind_end(end));
+bf_sx_wind_2 = bf_sx_wind_2(ind_start(1):ind_end(end));
+t_emg_wind_sx_2 = t_emg_wind_sx_2(ind_start(1):ind_end(end));
+
+ind_start = find(t_l_wind_2>=t_start);
+ind_end = find(t_l_wind_2<=t_end);
+l_knee_ext_flex_wind_2 = l_knee_ext_flex_wind_2(ind_start(1):ind_end(end));
+l_knee_int_ext_rot_wind_2 = l_knee_int_ext_rot_wind_2(ind_start(1):ind_end(end));
+l_knee_ad_abd_wind_2 = l_knee_ad_abd_wind_2(ind_start(1):ind_end(end));
+l_hip_ext_flex_wind_2 = l_hip_ext_flex_wind_2(ind_start(1):ind_end(end));
+l_hip_int_ext_rot_wind_2 = l_hip_int_ext_rot_wind_2(ind_start(1):ind_end(end));
+l_hip_ad_abd_wind_2 = l_hip_ad_abd_wind_2(ind_start(1):ind_end(end));
+l_ankle_ext_flex_wind_2 = l_ankle_ext_flex_wind_2(ind_start(1):ind_end(end));
+l_foot_vert_wind_2 = l_foot_vert_wind_2(ind_start(1):ind_end(end));
+z_com_wind_2 = z_com_wind_2(ind_start(1):ind_end(end));
+pelv_tilt_wind_2 = pelv_tilt_wind_2(ind_start(1):ind_end(end));
+t_l_wind_2 = t_l_wind_2(ind_start(1):ind_end(end));
+
+
+%--------------------------------------------------------------------------
+%parte finale
+%--------------------------------------------------------------------------
+figure(8)
+a(1)=subplot(5,1,1);
+hold on
+plot(t_emg,ta_sx_raw./max_ta_sx,'LineWidth',0.5,'Color',[0.65 0.75 1])
+plot(t_emg,ta_sx./max_ta_sx,'LineWidth',1,'Color',[0 0.3 0.7])
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Left Tibialis Anterior')
+
+a(2)=subplot(5,1,2);
+hold on
+plot(t_emg,gc_sx_raw./max_gc_sx,'LineWidth',0.5,'Color',[0.65 0.75 1])
+plot(t_emg,gc_sx./max_gc_sx,'LineWidth',1,'Color',[0 0.3 0.7])
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Left Gastrocnemius Medialis')
+
+a(3)=subplot(5,1,3);
+hold on
+plot(t_emg,rf_sx_raw./max_rf_sx,'LineWidth',0.5,'Color',[0.65 0.75 1])
+plot(t_emg,rf_sx./max_rf_sx,'LineWidth',1,'Color',[0 0.3 0.7])
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Left Rectus Femoris')
+
+a(4)=subplot(5,1,4);
+hold on
+plot(t_emg,bf_sx_raw./max_bf_sx,'LineWidth',0.5,'Color',[0.65 0.75 1])
+plot(t_emg,bf_sx./max_bf_sx,'LineWidth',1,'Color',[0 0.3 0.7])
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Left Biceps Femoris Caput Longus')
+
+a(5)=subplot(5,1,5);
+plot(t,l_knee_ext_flex,'Color',[0.85 0.33 0.1])
+xlabel('time [s]')
+ylabel('position')
+title('Left Knee Flexion-Extension')
+linkaxes(a,'x')
+
+figure(8)
+h = msgbox('Selezione di inizio e fine di tratto per gait finale (sx)','Avviso');
+uiwait(h);
+[tx,~]=ginput(2);
+t_A = tx(1); 
+t_B = tx(2);
+if t_A > t_B
+      t_start = t_B;
+      t_end = t_A;
+else
+      t_start = t_A;
+      t_end = t_B;
+end
+ind_start = find(t_emg>=t_start);
+ind_end = find(t_emg<=t_end);
+ta_sx_wind_3 = ta_sx(ind_start(1):ind_end(end));
+gc_sx_wind_3 = gc_sx(ind_start(1):ind_end(end));
+rf_sx_wind_3 = rf_sx(ind_start(1):ind_end(end));
+bf_sx_wind_3 = bf_sx(ind_start(1):ind_end(end));
+t_emg_wind_sx_3 = t_emg(ind_start(1):ind_end(end));
+
+ind_start = find(t>=t_start);
+ind_end = find(t<=t_end);
+l_knee_ext_flex_wind_3 = l_knee_ext_flex(ind_start(1):ind_end(end));
+l_knee_int_ext_rot_wind_3 = l_knee_int_ext_rot(ind_start(1):ind_end(end));
+l_knee_ad_abd_wind_3 = l_knee_ad_abd(ind_start(1):ind_end(end));
+l_hip_ext_flex_wind_3 = l_hip_ext_flex(ind_start(1):ind_end(end));
+l_hip_int_ext_rot_wind_3 = l_hip_int_ext_rot(ind_start(1):ind_end(end));
+l_hip_ad_abd_wind_3 = l_hip_ad_abd(ind_start(1):ind_end(end));
+l_ankle_ext_flex_wind_3 = l_ankle_ext_flex(ind_start(1):ind_end(end));
+l_foot_vert_wind_3 = l_foot_vert(ind_start(1):ind_end(end));
+z_com_wind_3 = z_com(ind_start(1):ind_end(end));
+pelv_tilt_wind_3 = pelv_tilt(ind_start(1):ind_end(end));
+t_l_wind_3 = t(ind_start(1):ind_end(end));
+
+figure(9)
+a(1)=subplot(5,1,1);
+plot(t_emg_wind_sx_3,ta_sx_wind_3./max_ta_sx)
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Left Tibialis Anterior')
+
+a(2)=subplot(5,1,2);
+plot(t_emg_wind_sx_3,gc_sx_wind_3./max_gc_sx)
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Left Gastrocnemius Medialis')
+
+a(3)=subplot(5,1,3);
+plot(t_emg_wind_sx_3,rf_sx_wind_3./max_rf_sx)
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Left Rectus Femoris')
+
+a(4)=subplot(5,1,4);
+plot(t_emg_wind_sx_3,bf_sx_wind_3./max_bf_sx)
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Left Biceps Femoris Caput Longus')
+
+a(5)=subplot(5,1,5);
+plot(t_l_wind_3,l_knee_ext_flex_wind_3,'Color',[0.85 0.33 0.1])
+xlabel('time [s]')
+ylabel('position')
+title('Left Knee Flexion-Extension')
+linkaxes(a,'x')
+
+h = msgbox('selezione (in ordine) inizio/fine gait e takeoff in mezzo (sx)','Avviso');
+uiwait(h);
+figure(9)
+[tx,~]=ginput(3);
+t_start = tx(1);
+t_end = tx(end);
+t_toff_sx_wind_3 = tx(2);
+t_sx(3) = tx(end)-tx(1);
+
+ind_start = find(t_emg_wind_sx_3>=t_start);
+ind_end = find(t_emg_wind_sx_3<=t_end);
+ta_sx_wind_3 = ta_sx_wind_3(ind_start(1):ind_end(end));
+gc_sx_wind_3 = gc_sx_wind_3(ind_start(1):ind_end(end));
+rf_sx_wind_3 = rf_sx_wind_3(ind_start(1):ind_end(end));
+bf_sx_wind_3 = bf_sx_wind_3(ind_start(1):ind_end(end));
+t_emg_wind_sx_3 = t_emg_wind_sx_3(ind_start(1):ind_end(end));
+
+ind_start = find(t_l_wind_3>=t_start);
+ind_end = find(t_l_wind_3<=t_end);
+l_knee_ext_flex_wind_3 = l_knee_ext_flex_wind_3(ind_start(1):ind_end(end));
+l_knee_int_ext_rot_wind_3 = l_knee_int_ext_rot_wind_3(ind_start(1):ind_end(end));
+l_knee_ad_abd_wind_3 = l_knee_ad_abd_wind_3(ind_start(1):ind_end(end));
+l_hip_ext_flex_wind_3 = l_hip_ext_flex_wind_3(ind_start(1):ind_end(end));
+l_hip_int_ext_rot_wind_3 = l_hip_int_ext_rot_wind_3(ind_start(1):ind_end(end));
+l_hip_ad_abd_wind_3 = l_hip_ad_abd_wind_3(ind_start(1):ind_end(end));
+l_ankle_ext_flex_wind_3 = l_ankle_ext_flex_wind_3(ind_start(1):ind_end(end));
+l_foot_vert_wind_3 = l_foot_vert_wind_3(ind_start(1):ind_end(end));
+z_com_wind_3 = z_com_wind_3(ind_start(1):ind_end(end));
+pelv_tilt_wind_3 = pelv_tilt_wind_3(ind_start(1):ind_end(end));
+t_l_wind_3 = t_l_wind_3(ind_start(1):ind_end(end));
+
+
+
+
+%% ------- lato dx -------
+%--------------------------------------------------------------------------
+% parte iniziale
+%--------------------------------------------------------------------------
+figure(10)
+a(1)=subplot(5,1,1);
+hold on
+plot(t_emg,ta_dx_raw./max_ta_dx,'LineWidth',0.5,'Color',[0.65 0.75 1])
+plot(t_emg,ta_dx./max_ta_dx,'LineWidth',1,'Color',[0 0.3 0.7])
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Right Tibialis Anterior')
+
+a(2)=subplot(5,1,2);
+hold on
+plot(t_emg,gc_dx_raw./max_gc_dx,'LineWidth',0.5,'Color',[0.65 0.75 1])
+plot(t_emg,gc_dx./max_gc_dx,'LineWidth',1,'Color',[0 0.3 0.7])
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Right Gastrocnemius Medialis')
+
+a(3)=subplot(5,1,3);
+hold on
+plot(t_emg,rf_dx_raw./max_rf_dx,'LineWidth',0.5,'Color',[0.65 0.75 1])
+plot(t_emg,rf_dx./max_rf_dx,'LineWidth',1,'Color',[0 0.3 0.7])
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Right Rectus Femoris')
+
+a(4)=subplot(5,1,4);
+hold on
+plot(t_emg,bf_dx_raw./max_bf_dx,'LineWidth',0.5,'Color',[0.65 0.75 1])
+plot(t_emg,bf_dx./max_bf_dx,'LineWidth',1,'Color',[0 0.3 0.7])
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Right Biceps Femoris Caput Longus')
+
+a(5)=subplot(5,1,5);
+plot(t,r_knee_ext_flex,'Color',[0.85 0.33 0.1])
+xlabel('time [s]')
+ylabel('position')
+title('Right Knee Flexion-Extension')
+linkaxes(a,'x')
+
+figure(10)
+h = msgbox('Selezione di inizio e fine di tratto per gait iniziale (dx)','Avviso');
+uiwait(h);
+[tx,~]=ginput(2);
+t_A = tx(1); 
+t_B = tx(2);
+if t_A > t_B
+      t_start = t_B;
+      t_end = t_A;
+else
+      t_start = t_A;
+      t_end = t_B;
+end
+ind_start = find(t_emg>=t_start);
+ind_end = find(t_emg<=t_end);
+ta_dx_wind_1 = ta_dx(ind_start(1):ind_end(end));
+gc_dx_wind_1 = gc_dx(ind_start(1):ind_end(end));
+rf_dx_wind_1 = rf_dx(ind_start(1):ind_end(end));
+bf_dx_wind_1 = bf_dx(ind_start(1):ind_end(end));
+t_emg_wind_dx_1 = t_emg(ind_start(1):ind_end(end));
+
+ind_start = find(t>=t_start);
+ind_end = find(t<=t_end);
+r_knee_ext_flex_wind_1 = r_knee_ext_flex(ind_start(1):ind_end(end));
+r_knee_int_ext_rot_wind_1 = r_knee_int_ext_rot(ind_start(1):ind_end(end));
+r_knee_ad_abd_wind_1 = r_knee_ad_abd(ind_start(1):ind_end(end));
+r_hip_ext_flex_wind_1 = r_hip_ext_flex(ind_start(1):ind_end(end));
+r_hip_int_ext_rot_wind_1 = r_hip_int_ext_rot(ind_start(1):ind_end(end));
+r_hip_ad_abd_wind_1 = r_hip_ad_abd(ind_start(1):ind_end(end));
+r_ankle_ext_flex_wind_1 = r_ankle_ext_flex(ind_start(1):ind_end(end));
+r_foot_vert_wind_1 = r_foot_vert(ind_start(1):ind_end(end));
+t_r_wind_1 = t(ind_start(1):ind_end(end));
+
+figure(11)
+a(1)=subplot(5,1,1);
+plot(t_emg_wind_dx_1,ta_dx_wind_1./max_ta_dx)
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Right Tibialis Anterior')
+
+a(2)=subplot(5,1,2);
+plot(t_emg_wind_dx_1,gc_dx_wind_1./max_gc_dx)
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Right Gastrocnemius Medialis')
+
+a(3)=subplot(5,1,3);
+plot(t_emg_wind_dx_1,rf_dx_wind_1./max_rf_dx)
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Right Rectus Femoris')
+
+a(4)=subplot(5,1,4);
+plot(t_emg_wind_dx_1,bf_dx_wind_1./max_bf_dx)
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Right Biceps Femoris Caput Longus')
+
+a(5)=subplot(5,1,5);
+plot(t_r_wind_1,r_knee_ext_flex_wind_1,'Color',[0.85 0.33 0.1])
+xlabel('time [s]')
+ylabel('position')
+title('Right Knee Flexion Extension')
+linkaxes(a,'x')
+
+h = msgbox('selezione (in ordine) inizio/fine gait e takeoff in mezzo (dx)','Avviso');
+uiwait(h);
+figure(11)
+[tx,~]=ginput(3);
+t_start = tx(1);
+t_end = tx(end);
+t_toff_dx_wind_1 = tx(2);
+t_dx(1) = tx(end)-tx(1);
+
+ind_start = find(t_emg_wind_dx_1>=t_start);
+ind_end = find(t_emg_wind_dx_1<=t_end);
+ta_dx_wind_1 = ta_dx_wind_1(ind_start(1):ind_end(end));
+gc_dx_wind_1 = gc_dx_wind_1(ind_start(1):ind_end(end));
+rf_dx_wind_1 = rf_dx_wind_1(ind_start(1):ind_end(end));
+bf_dx_wind_1 = bf_dx_wind_1(ind_start(1):ind_end(end));
+t_emg_wind_dx_1 = t_emg_wind_dx_1(ind_start(1):ind_end(end));
+
+ind_start = find(t_r_wind_1>=t_start);
+ind_end = find(t_r_wind_1<=t_end);
+r_knee_ext_flex_wind_1 = r_knee_ext_flex_wind_1(ind_start(1):ind_end(end));
+r_knee_int_ext_rot_wind_1 = r_knee_int_ext_rot_wind_1(ind_start(1):ind_end(end));
+r_knee_ad_abd_wind_1 = r_knee_ad_abd_wind_1(ind_start(1):ind_end(end));
+r_hip_ext_flex_wind_1 = r_hip_ext_flex_wind_1(ind_start(1):ind_end(end));
+r_hip_int_ext_rot_wind_1 = r_hip_int_ext_rot_wind_1(ind_start(1):ind_end(end));
+r_hip_ad_abd_wind_1 = r_hip_ad_abd_wind_1(ind_start(1):ind_end(end));
+r_ankle_ext_flex_wind_1 = r_ankle_ext_flex_wind_1(ind_start(1):ind_end(end));
+r_foot_vert_wind_1 = r_foot_vert_wind_1(ind_start(1):ind_end(end));
+t_r_wind_1 = t_r_wind_1(ind_start(1):ind_end(end));
+
+%--------------------------------------------------------------------------
+%parte intermedia
+%--------------------------------------------------------------------------
+figure(12)
+a(1)=subplot(5,1,1);
+hold on
+plot(t_emg,ta_dx_raw./max_ta_dx,'LineWidth',0.5,'Color',[0.65 0.75 1])
+plot(t_emg,ta_dx./max_ta_dx,'LineWidth',1,'Color',[0 0.3 0.7])
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Right Tibialis Anterior')
+
+a(2)=subplot(5,1,2);
+hold on
+plot(t_emg,gc_dx_raw./max_gc_dx,'LineWidth',0.5,'Color',[0.65 0.75 1])
+plot(t_emg,gc_dx./max_gc_dx,'LineWidth',1,'Color',[0 0.3 0.7])
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Right Gastrocnemius Medialis')
+
+a(3)=subplot(5,1,3);
+hold on
+plot(t_emg,rf_dx_raw./max_rf_dx,'LineWidth',0.5,'Color',[0.65 0.75 1])
+plot(t_emg,rf_dx./max_rf_dx,'LineWidth',1,'Color',[0 0.3 0.7])
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Right Rectus Femoris')
+
+a(4)=subplot(5,1,4);
+hold on
+plot(t_emg,bf_dx_raw./max_bf_dx,'LineWidth',0.5,'Color',[0.65 0.75 1])
+plot(t_emg,bf_dx./max_bf_dx,'LineWidth',1,'Color',[0 0.3 0.7])
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Right Biceps Femoris Caput Longus')
+
+a(5)=subplot(5,1,5);
+plot(t,r_knee_ext_flex,'Color',[0.85 0.33 0.1])
+xlabel('time [s]')
+ylabel('position')
+title('Right Knee Flexion-Extension')
+linkaxes(a,'x')
+
+figure(12)
+h = msgbox('Selezione di inizio e fine di tratto per gait intermedio (dx)','Avviso');
+uiwait(h);
+[tx,~]=ginput(2);
+t_A = tx(1); 
+t_B = tx(2);
+if t_A > t_B
+      t_start = t_B;
+      t_end = t_A;
+else
+      t_start = t_A;
+      t_end = t_B;
+end
+ind_start = find(t_emg>=t_start);
+ind_end = find(t_emg<=t_end);
+ta_dx_wind_2 = ta_dx(ind_start(1):ind_end(end));
+gc_dx_wind_2 = gc_dx(ind_start(1):ind_end(end));
+rf_dx_wind_2 = rf_dx(ind_start(1):ind_end(end));
+bf_dx_wind_2 = bf_dx(ind_start(1):ind_end(end));
+t_emg_wind_dx_2 = t_emg(ind_start(1):ind_end(end));
+
+ind_start = find(t>=t_start);
+ind_end = find(t<=t_end);
+r_knee_ext_flex_wind_2 = r_knee_ext_flex(ind_start(1):ind_end(end));
+r_knee_int_ext_rot_wind_2 = r_knee_int_ext_rot(ind_start(1):ind_end(end));
+r_knee_ad_abd_wind_2 = r_knee_ad_abd(ind_start(1):ind_end(end));
+r_hip_ext_flex_wind_2 = r_hip_ext_flex(ind_start(1):ind_end(end));
+r_hip_int_ext_rot_wind_2 = r_hip_int_ext_rot(ind_start(1):ind_end(end));
+r_hip_ad_abd_wind_2 = r_hip_ad_abd(ind_start(1):ind_end(end));
+r_ankle_ext_flex_wind_2 = r_ankle_ext_flex(ind_start(1):ind_end(end));
+r_foot_vert_wind_2 = r_foot_vert(ind_start(1):ind_end(end));
+t_r_wind_2 = t(ind_start(1):ind_end(end));
+
+figure(13)
+a(1)=subplot(5,1,1);
+plot(t_emg_wind_dx_2,ta_dx_wind_2./max_ta_dx)
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Right Tibialis Anterior')
+
+a(2)=subplot(5,1,2);
+plot(t_emg_wind_dx_2,gc_dx_wind_2./max_gc_dx)
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Right Gastrocnemius Medialis')
+
+a(3)=subplot(5,1,3);
+plot(t_emg_wind_dx_2,rf_dx_wind_2./max_rf_dx)
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Right Rectus Femoris')
+
+a(4)=subplot(5,1,4);
+plot(t_emg_wind_dx_2,bf_dx_wind_2./max_bf_dx)
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Right Biceps Femoris Caput Longus')
+
+a(5)=subplot(5,1,5);
+plot(t_r_wind_2,r_knee_ext_flex_wind_2,'Color',[0.85 0.33 0.1])
+xlabel('time [s]')
+ylabel('position')
+title('Right Knee Flexion Extension')
+linkaxes(a,'x')
+
+h = msgbox('selezione (in ordine) inizio/fine gait e takeoff in mezzo (dx)','Avviso');
+uiwait(h);
+figure(13)
+[tx,~]=ginput(3);
+t_start = tx(1);
+t_end = tx(end);
+t_toff_dx_wind_2 = tx(2);
+t_dx(2) = tx(end)-tx(1);
+
+ind_start = find(t_emg_wind_dx_2>=t_start);
+ind_end = find(t_emg_wind_dx_2<=t_end);
+ta_dx_wind_2 = ta_dx_wind_2(ind_start(1):ind_end(end));
+gc_dx_wind_2 = gc_dx_wind_2(ind_start(1):ind_end(end));
+rf_dx_wind_2 = rf_dx_wind_2(ind_start(1):ind_end(end));
+bf_dx_wind_2 = bf_dx_wind_2(ind_start(1):ind_end(end));
+t_emg_wind_dx_2 = t_emg_wind_dx_2(ind_start(1):ind_end(end));
+
+ind_start = find(t_r_wind_2>=t_start);
+ind_end = find(t_r_wind_2<=t_end);
+r_knee_ext_flex_wind_2 = r_knee_ext_flex_wind_2(ind_start(1):ind_end(end));
+r_knee_int_ext_rot_wind_2 = r_knee_int_ext_rot_wind_2(ind_start(1):ind_end(end));
+r_knee_ad_abd_wind_2 = r_knee_ad_abd_wind_2(ind_start(1):ind_end(end));
+r_hip_ext_flex_wind_2 = r_hip_ext_flex_wind_2(ind_start(1):ind_end(end));
+r_hip_int_ext_rot_wind_2 = r_hip_int_ext_rot_wind_2(ind_start(1):ind_end(end));
+r_hip_ad_abd_wind_2 = r_hip_ad_abd_wind_2(ind_start(1):ind_end(end));
+r_ankle_ext_flex_wind_2 = r_ankle_ext_flex_wind_2(ind_start(1):ind_end(end));
+r_foot_vert_wind_2 = r_foot_vert_wind_2(ind_start(1):ind_end(end));
+t_r_wind_2 = t_r_wind_2(ind_start(1):ind_end(end));
+
+
+%--------------------------------------------------------------------------
+%parte finale
+%--------------------------------------------------------------------------
+figure(14)
+a(1)=subplot(5,1,1);
+hold on
+plot(t_emg,ta_dx_raw./max_ta_dx,'LineWidth',0.5,'Color',[0.65 0.75 1])
+plot(t_emg,ta_dx./max_ta_dx,'LineWidth',1,'Color',[0 0.3 0.7])
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Right Tibialis Anterior')
+
+a(2)=subplot(5,1,2);
+hold on
+plot(t_emg,gc_dx_raw./max_gc_dx,'LineWidth',0.5,'Color',[0.65 0.75 1])
+plot(t_emg,gc_dx./max_gc_dx,'LineWidth',1,'Color',[0 0.3 0.7])
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Right Gastrocnemius Medialis')
+
+a(3)=subplot(5,1,3);
+hold on
+plot(t_emg,rf_dx_raw./max_rf_dx,'LineWidth',0.5,'Color',[0.65 0.75 1])
+plot(t_emg,rf_dx./max_rf_dx,'LineWidth',1,'Color',[0 0.3 0.7])
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Right Rectus Femoris')
+
+a(4)=subplot(5,1,4);
+hold on
+plot(t_emg,bf_dx_raw./max_bf_dx,'LineWidth',0.5,'Color',[0.65 0.75 1])
+plot(t_emg,bf_dx./max_bf_dx,'LineWidth',1,'Color',[0 0.3 0.7])
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Right Biceps Femoris Caput Longus')
+
+a(5)=subplot(5,1,5);
+plot(t,r_knee_ext_flex,'Color',[0.85 0.33 0.1])
+xlabel('time [s]')
+ylabel('position')
+title('Right Knee Flexion-Extension')
+linkaxes(a,'x')
+
+figure(14)
+h = msgbox('Selezione di inizio e fine di tratto per gait finale (dx)','Avviso');
+uiwait(h);
+[tx,~]=ginput(2);
+t_A = tx(1); 
+t_B = tx(2);
+if t_A > t_B
+      t_start = t_B;
+      t_end = t_A;
+else
+      t_start = t_A;
+      t_end = t_B;
+end
+ind_start = find(t_emg>=t_start);
+ind_end = find(t_emg<=t_end);
+ta_dx_wind_3 = ta_dx(ind_start(1):ind_end(end));
+gc_dx_wind_3 = gc_dx(ind_start(1):ind_end(end));
+rf_dx_wind_3 = rf_dx(ind_start(1):ind_end(end));
+bf_dx_wind_3 = bf_dx(ind_start(1):ind_end(end));
+t_emg_wind_dx_3 = t_emg(ind_start(1):ind_end(end));
+
+ind_start = find(t>=t_start);
+ind_end = find(t<=t_end);
+r_knee_ext_flex_wind_3 = r_knee_ext_flex(ind_start(1):ind_end(end));
+r_knee_int_ext_rot_wind_3 = r_knee_int_ext_rot(ind_start(1):ind_end(end));
+r_knee_ad_abd_wind_3 = r_knee_ad_abd(ind_start(1):ind_end(end));
+r_hip_ext_flex_wind_3 = r_hip_ext_flex(ind_start(1):ind_end(end));
+r_hip_int_ext_rot_wind_3 = r_hip_int_ext_rot(ind_start(1):ind_end(end));
+r_hip_ad_abd_wind_3 = r_hip_ad_abd(ind_start(1):ind_end(end));
+r_ankle_ext_flex_wind_3 = r_ankle_ext_flex(ind_start(1):ind_end(end));
+r_foot_vert_wind_3 = r_foot_vert(ind_start(1):ind_end(end));
+t_r_wind_3 = t(ind_start(1):ind_end(end));
+
+figure(15)
+a(1)=subplot(5,1,1);
+plot(t_emg_wind_dx_3,ta_dx_wind_3./max_ta_dx)
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Right Tibialis Anterior')
+
+a(2)=subplot(5,1,2);
+plot(t_emg_wind_dx_3,gc_dx_wind_3./max_gc_dx)
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Right Gastrocnemius Medialis')
+
+a(3)=subplot(5,1,3);
+plot(t_emg_wind_dx_3,rf_dx_wind_3./max_rf_dx)
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Right Rectus Femoris')
+
+a(4)=subplot(5,1,4);
+plot(t_emg_wind_dx_3,bf_dx_wind_3./max_bf_dx)
+xlabel('time [s]')
+ylabel('activation [%]')
+title('Right Biceps Femoris Caput Longus')
+
+a(5)=subplot(5,1,5);
+plot(t_r_wind_3,r_knee_ext_flex_wind_3,'Color',[0.85 0.33 0.1])
+xlabel('time [s]')
+ylabel('position')
+title('Right Knee Flexion-Extension')
+linkaxes(a,'x')
+
+h = msgbox('selezione (in ordine) inizio/fine gait e takeoff in mezzo (dx)','Avviso');
+uiwait(h);
+figure(15)
+[tx,~]=ginput(3);
+t_start = tx(1);
+t_end = tx(end);
+t_toff_dx_wind_3 = tx(2);
+t_dx(3) = tx(end)-tx(1);
+
+ind_start = find(t_emg_wind_dx_3>=t_start);
+ind_end = find(t_emg_wind_dx_3<=t_end);
+ta_dx_wind_3 = ta_dx_wind_3(ind_start(1):ind_end(end));
+gc_dx_wind_3 = gc_dx_wind_3(ind_start(1):ind_end(end));
+rf_dx_wind_3 = rf_dx_wind_3(ind_start(1):ind_end(end));
+bf_dx_wind_3 = bf_dx_wind_3(ind_start(1):ind_end(end));
+t_emg_wind_dx_3 = t_emg_wind_dx_3(ind_start(1):ind_end(end));
+
+ind_start = find(t_r_wind_3>=t_start);
+ind_end = find(t_r_wind_3<=t_end);
+r_knee_ext_flex_wind_3 = r_knee_ext_flex_wind_3(ind_start(1):ind_end(end));
+r_knee_int_ext_rot_wind_3 = r_knee_int_ext_rot_wind_3(ind_start(1):ind_end(end));
+r_knee_ad_abd_wind_3 = r_knee_ad_abd_wind_3(ind_start(1):ind_end(end));
+r_hip_ext_flex_wind_3 = r_hip_ext_flex_wind_3(ind_start(1):ind_end(end));
+r_hip_int_ext_rot_wind_3 = r_hip_int_ext_rot_wind_3(ind_start(1):ind_end(end));
+r_hip_ad_abd_wind_3 = r_hip_ad_abd_wind_3(ind_start(1):ind_end(end));
+r_ankle_ext_flex_wind_3 = r_ankle_ext_flex_wind_3(ind_start(1):ind_end(end));
+r_foot_vert_wind_3 = r_foot_vert_wind_3(ind_start(1):ind_end(end));
+t_r_wind_3 = t_r_wind_3(ind_start(1):ind_end(end));
+
+
+
+
+
+%% ===== cadence =====
+swing_time = (mean(t_sx)+mean(t_dx))/2;
+cadence_hz = 1/( swing_time )*2;
+cadence = 60*cadence_hz;
+stride_length = swing_time * vel/2;
+
+% cadenza in Hz di pro: 2.91
+% cadenza in Hz di amatori: 2.76
+
+
+
+%% ===== Center of Mass =====
+
+%% ------- vertical oscillations -------
+figure
+plot(t,z_com)
+xlabel('time [s]')
+ylabel('position')
+title('Vertical displacement of the center of mass')
+
+figure
+plot((t_l_wind_1-t_l_wind_1(1))./(t_l_wind_1(end)-t_l_wind_1(1)),z_com_wind_1)
+xline((t_toff_sx_wind_1-t_l_wind_1(1))./(t_l_wind_1(end)-t_l_wind_1(1)),'--','--','Color',[0 0 0],'LineWidth',1.5)
+xlabel('time [s]')
+ylabel('position')
+title('Vertical displacement of the center of mass in one gait')
+
+com_max_height = maxk(z_com(1:3000),20);
+com_min_height = mink(z_com(1:3000),20);
+com_vert_excursion = mean(com_max_height-com_min_height)*100; %[cm]
+
+%% ------- mediolaterial antero-posterior accelerations -------
+
+
+
+
+
+%% ===== rectus femoris, biceps femoris - flex/ext knee =====
+% ---- window 1 ----
+figure 
+subplot(3,2,1)
+plot((t_l_wind_1-t_l_wind_1(1))./(t_l_wind_1(end)-t_l_wind_1(1)), l_knee_ext_flex_wind_1,'Color',[0.85 0.33 0.1])
+text(0.92,0.92*max(l_knee_ext_flex_wind_1),'flex.')
+xline((t_toff_sx_wind_1-t_l_wind_1(1))./(t_l_wind_1(end)-t_l_wind_1(1)),'--','Color',[0 0 0],'LineWidth',1.5)
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('Left Knee flexion-extension')
+
+subplot(3,2,2)
+plot((t_r_wind_1-t_r_wind_1(1))./(t_r_wind_1(end)-t_r_wind_1(1)), r_knee_ext_flex_wind_1,'Color',[0.85 0.33 0.1])
+text(0.92,0.92*max(r_knee_ext_flex_wind_1),'flex.')
+xline((t_toff_dx_wind_1-t_r_wind_1(1))./(t_r_wind_1(end)-t_r_wind_1(1)),'--','Color',[0 0 0],'LineWidth',1.5)
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('Rigth Knee flexion-extension')
+
+subplot(3,2,3)
+plot((t_emg_wind_sx_1-t_emg_wind_sx_1(1))./(t_emg_wind_sx_1(end)-t_emg_wind_sx_1(1)), rf_sx_wind_1/max_rf_sx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Left Rectus Femoris')
+
+subplot(3,2,4)
+plot((t_emg_wind_dx_1-t_emg_wind_dx_1(1))./(t_emg_wind_dx_1(end)-t_emg_wind_dx_1(1)),rf_dx_wind_1/max_rf_dx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Right Rectus Femoris')
+
+subplot(3,2,5)
+plot((t_emg_wind_sx_1-t_emg_wind_sx_1(1))./(t_emg_wind_sx_1(end)-t_emg_wind_sx_1(1)), bf_sx_wind_1/max_bf_sx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Left Biceps Femoris')
+
+subplot(3,2,6)
+plot((t_emg_wind_dx_1-t_emg_wind_dx_1(1))./(t_emg_wind_dx_1(end)-t_emg_wind_dx_1(1)),bf_dx_wind_1/max_bf_dx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Right Biceps Femoris')
+sgtitle('RF BF, knee flex/ext - window 1')
+
+
+% ---- window 2 ----
+figure 
+subplot(3,2,1)
+plot((t_l_wind_2-t_l_wind_2(1))./(t_l_wind_2(end)-t_l_wind_2(1)), l_knee_ext_flex_wind_2,'Color',[0.85 0.33 0.1])
+text(0.92,0.92*max(l_knee_ext_flex_wind_2),'flex.')
+xline((t_toff_sx_wind_2-t_l_wind_2(1))./(t_l_wind_2(end)-t_l_wind_2(1)),'--','Color',[0 0 0],'LineWidth',1.5)
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('Left Knee flexion-extension')
+
+subplot(3,2,2)
+plot((t_r_wind_2-t_r_wind_2(1))./(t_r_wind_2(end)-t_r_wind_2(1)), r_knee_ext_flex_wind_2,'Color',[0.85 0.33 0.1])
+text(0.92,0.92*max(r_knee_ext_flex_wind_2),'flex.')
+xline((t_toff_dx_wind_2-t_r_wind_2(1))./(t_r_wind_2(end)-t_r_wind_2(1)),'--','Color',[0 0 0],'LineWidth',1.5)
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('Rigth Knee flexion-extension')
+
+subplot(3,2,3)
+plot((t_emg_wind_sx_2-t_emg_wind_sx_2(1))./(t_emg_wind_sx_2(end)-t_emg_wind_sx_2(1)), rf_sx_wind_2/max_rf_sx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Left Rectus Femoris')
+
+subplot(3,2,4)
+plot((t_emg_wind_dx_2-t_emg_wind_dx_2(1))./(t_emg_wind_dx_2(end)-t_emg_wind_dx_2(1)),rf_dx_wind_2/max_rf_dx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Right Rectus Femoris')
+
+subplot(3,2,5)
+plot((t_emg_wind_sx_2-t_emg_wind_sx_2(1))./(t_emg_wind_sx_2(end)-t_emg_wind_sx_2(1)), bf_sx_wind_2/max_bf_sx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Left Biceps Femoris')
+
+subplot(3,2,6)
+plot((t_emg_wind_dx_2-t_emg_wind_dx_2(1))./(t_emg_wind_dx_2(end)-t_emg_wind_dx_2(1)),bf_dx_wind_2/max_bf_dx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Right Biceps Femoris')
+sgtitle('RF BF, knee flex/ext - window 2')
+
+
+% ---- window 3 ----
+figure 
+subplot(3,2,1)
+plot((t_l_wind_3-t_l_wind_3(1))./(t_l_wind_3(end)-t_l_wind_3(1)), l_knee_ext_flex_wind_3,'Color',[0.85 0.33 0.1])
+text(0.92,0.92*max(l_knee_ext_flex_wind_3),'flex.')
+xline((t_toff_sx_wind_3-t_l_wind_3(1))./(t_l_wind_3(end)-t_l_wind_3(1)),'--','Color',[0 0 0],'LineWidth',1.5)
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('Left Knee flexion-extension')
+
+subplot(3,2,2)
+plot((t_r_wind_3-t_r_wind_3(1))./(t_r_wind_3(end)-t_r_wind_3(1)), r_knee_ext_flex_wind_3,'Color',[0.85 0.33 0.1])
+text(0.92,0.92*max(r_knee_ext_flex_wind_3),'flex.')
+xline((t_toff_dx_wind_3-t_r_wind_3(1))./(t_r_wind_3(end)-t_r_wind_3(1)),'--','Color',[0 0 0],'LineWidth',1.5)
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('Rigth Knee flexion-extension')
+
+subplot(3,2,3)
+plot((t_emg_wind_sx_3-t_emg_wind_sx_3(1))./(t_emg_wind_sx_3(end)-t_emg_wind_sx_3(1)), rf_sx_wind_3/max_rf_sx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Left Rectus Femoris')
+
+subplot(3,2,4)
+plot((t_emg_wind_dx_3-t_emg_wind_dx_3(1))./(t_emg_wind_dx_3(end)-t_emg_wind_dx_3(1)),rf_dx_wind_3/max_rf_dx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Right Rectus Femoris')
+
+subplot(3,2,5)
+plot((t_emg_wind_sx_3-t_emg_wind_sx_3(1))./(t_emg_wind_sx_3(end)-t_emg_wind_sx_3(1)), bf_sx_wind_3/max_bf_sx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Left Biceps Femoris')
+
+subplot(3,2,6)
+plot((t_emg_wind_dx_3-t_emg_wind_dx_3(1))./(t_emg_wind_dx_3(end)-t_emg_wind_dx_3(1)),bf_dx_wind_3/max_bf_dx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Right Biceps Femoris')
+sgtitle('RF BF, knee flex/ext - window 3')
+
+
+
+
+
+
+
+%% ===== gastrocnemius medialis, tibialis anterior - plant/dorsi flex ankle =====
+% ---- window 1 ----
+figure 
+subplot(3,2,1)
+plot((t_l_wind_1-t_l_wind_1(1))./(t_l_wind_1(end)-t_l_wind_1(1)), l_ankle_ext_flex_wind_1,'Color',[0.85 0.33 0.1])
+text(0.88,0.95*max(l_ankle_ext_flex_wind_1),'dorsi')
+text(0.88,0.95*min(l_ankle_ext_flex_wind_1),'plantar')
+xline((t_toff_sx_wind_1-t_l_wind_1(1))./(t_l_wind_1(end)-t_l_wind_1(1)),'--','Color',[0 0 0],'LineWidth',1.5)
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('Left Ankle plantar-dorsi flexion')
+
+subplot(3,2,2)
+plot((t_r_wind_1-t_r_wind_1(1))./(t_r_wind_1(end)-t_r_wind_1(1)), r_ankle_ext_flex_wind_1,'Color',[0.85 0.33 0.1])
+text(0.88,0.95*max(r_ankle_ext_flex_wind_1),'dorsi')
+text(0.88,0.95*min(r_ankle_ext_flex_wind_1),'plantar')
+xline((t_toff_dx_wind_1-t_r_wind_1(1))./(t_r_wind_1(end)-t_r_wind_1(1)),'--','Color',[0 0 0],'LineWidth',1.5)
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('Rigth Ankle plantar-dorsi flexion')
+
+subplot(3,2,3)
+plot((t_emg_wind_sx_1-t_emg_wind_sx_1(1))./(t_emg_wind_sx_1(end)-t_emg_wind_sx_1(1)), gc_sx_wind_1/max_gc_sx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Left Gastrocnemius Medialis')
+
+subplot(3,2,4)
+plot((t_emg_wind_dx_1-t_emg_wind_dx_1(1))./(t_emg_wind_dx_1(end)-t_emg_wind_dx_1(1)),gc_dx_wind_1/max_gc_dx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Right Gastrocnemius Medialis')
+
+subplot(3,2,5)
+plot((t_emg_wind_sx_1-t_emg_wind_sx_1(1))./(t_emg_wind_sx_1(end)-t_emg_wind_sx_1(1)), ta_sx_wind_1/max_ta_sx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Left Tibialis Anterior')
+
+subplot(3,2,6)
+plot((t_emg_wind_dx_1-t_emg_wind_dx_1(1))./(t_emg_wind_dx_1(end)-t_emg_wind_dx_1(1)),ta_dx_wind_1/max_ta_dx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Right Tibialis Anterior')
+sgtitle('GC TA, ankle flex/ext - window 1')
+
+
+% ---- window 2 ----
+figure 
+subplot(3,2,1)
+plot((t_l_wind_2-t_l_wind_2(1))./(t_l_wind_2(end)-t_l_wind_2(1)), l_ankle_ext_flex_wind_2,'Color',[0.85 0.33 0.1])
+text(0.88,0.95*max(l_ankle_ext_flex_wind_2),'dorsi')
+text(0.88,0.95*min(l_ankle_ext_flex_wind_2),'plantar')
+xline((t_toff_sx_wind_2-t_l_wind_2(1))./(t_l_wind_2(end)-t_l_wind_2(1)),'--','Color',[0 0 0],'LineWidth',1.5)
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('Left Ankle plantar-dorsi flexion')
+
+subplot(3,2,2)
+plot((t_r_wind_2-t_r_wind_2(1))./(t_r_wind_2(end)-t_r_wind_2(1)), r_ankle_ext_flex_wind_2,'Color',[0.85 0.33 0.1])
+text(0.88,0.95*max(r_ankle_ext_flex_wind_2),'dorsi')
+text(0.88,0.95*min(r_ankle_ext_flex_wind_2),'plantar')
+xline((t_toff_dx_wind_2-t_r_wind_2(1))./(t_r_wind_2(end)-t_r_wind_2(1)),'--','Color',[0 0 0],'LineWidth',1.5)
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('Rigth Ankle plantar-dorsi flexion')
+
+subplot(3,2,3)
+plot((t_emg_wind_sx_2-t_emg_wind_sx_2(1))./(t_emg_wind_sx_2(end)-t_emg_wind_sx_2(1)), gc_sx_wind_2/max_gc_sx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Left Gastrocnemius Medialis')
+
+subplot(3,2,4)
+plot((t_emg_wind_dx_2-t_emg_wind_dx_2(1))./(t_emg_wind_dx_2(end)-t_emg_wind_dx_2(1)),gc_dx_wind_2/max_gc_dx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Right Gastrocnemius Medialis')
+
+subplot(3,2,5)
+plot((t_emg_wind_sx_2-t_emg_wind_sx_2(1))./(t_emg_wind_sx_2(end)-t_emg_wind_sx_2(1)), ta_sx_wind_2/max_ta_sx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Left Tibialis Anterior')
+
+subplot(3,2,6)
+plot((t_emg_wind_dx_2-t_emg_wind_dx_2(1))./(t_emg_wind_dx_2(end)-t_emg_wind_dx_2(1)),ta_dx_wind_2/max_ta_dx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Right Tibialis Anterior')
+sgtitle('GC TA, ankle flex/ext - window 2')
+
+
+% ---- window 3 ----
+figure 
+subplot(3,2,1)
+plot((t_l_wind_3-t_l_wind_3(1))./(t_l_wind_3(end)-t_l_wind_3(1)), l_ankle_ext_flex_wind_3,'Color',[0.85 0.33 0.1])
+text(0.88,0.95*max(l_ankle_ext_flex_wind_3),'dorsi')
+text(0.88,0.95*min(l_ankle_ext_flex_wind_3),'plantar')
+xline((t_toff_sx_wind_3-t_l_wind_3(1))./(t_l_wind_3(end)-t_l_wind_3(1)),'--','Color',[0 0 0],'LineWidth',1.5)
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('Left Ankle plantar-dorsi flexion')
+
+subplot(3,2,2)
+plot((t_r_wind_3-t_r_wind_3(1))./(t_r_wind_3(end)-t_r_wind_3(1)), r_ankle_ext_flex_wind_3,'Color',[0.85 0.33 0.1])
+text(0.88,0.95*max(r_ankle_ext_flex_wind_3),'dorsi')
+text(0.88,0.95*min(r_ankle_ext_flex_wind_3),'plantar')
+xline((t_toff_dx_wind_3-t_r_wind_3(1))./(t_r_wind_3(end)-t_r_wind_3(1)),'--','Color',[0 0 0],'LineWidth',1.5)
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('Rigth Ankle plantar-dorsi flexion')
+
+subplot(3,2,3)
+plot((t_emg_wind_sx_3-t_emg_wind_sx_3(1))./(t_emg_wind_sx_3(end)-t_emg_wind_sx_3(1)), gc_sx_wind_3/max_gc_sx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Left Gastrocnemius Medialis')
+
+subplot(3,2,4)
+plot((t_emg_wind_dx_3-t_emg_wind_dx_3(1))./(t_emg_wind_dx_3(end)-t_emg_wind_dx_3(1)),gc_dx_wind_3/max_gc_dx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Right Gastrocnemius Medialis')
+
+subplot(3,2,5)
+plot((t_emg_wind_sx_3-t_emg_wind_sx_3(1))./(t_emg_wind_sx_3(end)-t_emg_wind_sx_3(1)), ta_sx_wind_3/max_ta_sx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Left Tibialis Anterior')
+
+subplot(3,2,6)
+plot((t_emg_wind_dx_3-t_emg_wind_dx_3(1))./(t_emg_wind_dx_3(end)-t_emg_wind_dx_3(1)),ta_dx_wind_3/max_ta_dx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Right Tibialis Anterior')
+sgtitle('GC TA, ankle flex/ext - window 3')
+
+
+
+
+
+
+%% ===== biceps femoris, rectus femoris - flex/ext hip =====
+% ---- window 1 ----
+figure
+subplot(3,2,1)
+plot((t_l_wind_1-t_l_wind_1(1))./(t_l_wind_1(end)-t_l_wind_1(1)), l_hip_ext_flex_wind_1,'Color',[0.85 0.33 0.1])
+text(0.88,0.95*max(l_hip_ext_flex_wind_1),'flex')
+text(0.88,0.95*min(l_hip_ext_flex_wind_1),'ext')
+xline((t_toff_sx_wind_1-t_l_wind_1(1))./(t_l_wind_1(end)-t_l_wind_1(1)),'--','Color',[0 0 0],'LineWidth',1.5)
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('Left Hip flexion-extension')
+
+subplot(3,2,2)
+plot((t_r_wind_1-t_r_wind_1(1))./(t_r_wind_1(end)-t_r_wind_1(1)), r_hip_ext_flex_wind_1,'Color',[0.85 0.33 0.1])
+text(0.88,0.95*max(r_hip_ext_flex_wind_1),'flex')
+text(0.88,0.95*min(r_hip_ext_flex_wind_1),'ext')
+xline((t_toff_dx_wind_1-t_r_wind_1(1))./(t_r_wind_1(end)-t_r_wind_1(1)),'--','Color',[0 0 0],'LineWidth',1.5)
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('Right Hip flexion-extension')
+
+subplot(3,2,3)
+plot((t_emg_wind_sx_1-t_emg_wind_sx_1(1))./(t_emg_wind_sx_1(end)-t_emg_wind_sx_1(1)), rf_sx_wind_1/max_rf_sx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Left Rectus Femoris')
+
+subplot(3,2,4)
+plot((t_emg_wind_dx_1-t_emg_wind_dx_1(1))./(t_emg_wind_dx_1(end)-t_emg_wind_dx_1(1)),rf_dx_wind_1/max_rf_dx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Right Rectus Femoris')
+
+subplot(3,2,5)
+plot((t_emg_wind_sx_1-t_emg_wind_sx_1(1))./(t_emg_wind_sx_1(end)-t_emg_wind_sx_1(1)), bf_sx_wind_1/max_bf_sx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Left Biceps Femoris')
+
+subplot(3,2,6)
+plot((t_emg_wind_dx_1-t_emg_wind_dx_1(1))./(t_emg_wind_dx_1(end)-t_emg_wind_dx_1(1)),bf_dx_wind_1/max_bf_dx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Right Biceps Femoris')
+sgtitle('RF BF, hip flex/ext - window 1')
+
+
+
+% ---- window 2 ----
+figure
+subplot(3,2,1)
+plot((t_l_wind_2-t_l_wind_2(1))./(t_l_wind_2(end)-t_l_wind_2(1)), l_hip_ext_flex_wind_2,'Color',[0.85 0.33 0.1])
+text(0.88,0.95*max(l_hip_ext_flex_wind_2),'flex')
+text(0.88,0.95*min(l_hip_ext_flex_wind_2),'ext')
+xline((t_toff_sx_wind_2-t_l_wind_2(1))./(t_l_wind_2(end)-t_l_wind_2(1)),'--','Color',[0 0 0],'LineWidth',1.5)
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('Left Hip flexion-extension')
+
+subplot(3,2,2)
+plot((t_r_wind_2-t_r_wind_2(1))./(t_r_wind_2(end)-t_r_wind_2(1)), r_hip_ext_flex_wind_2,'Color',[0.85 0.33 0.1])
+text(0.88,0.95*max(r_hip_ext_flex_wind_2),'flex')
+text(0.88,0.95*min(r_hip_ext_flex_wind_2),'ext')
+xline((t_toff_dx_wind_2-t_r_wind_2(1))./(t_r_wind_2(end)-t_r_wind_2(1)),'--','Color',[0 0 0],'LineWidth',1.5)
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('Right Hip flexion-extension')
+
+subplot(3,2,3)
+plot((t_emg_wind_sx_2-t_emg_wind_sx_2(1))./(t_emg_wind_sx_2(end)-t_emg_wind_sx_2(1)), rf_sx_wind_2/max_rf_sx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Left Rectus Femoris')
+
+subplot(3,2,4)
+plot((t_emg_wind_dx_2-t_emg_wind_dx_2(1))./(t_emg_wind_dx_2(end)-t_emg_wind_dx_2(1)),rf_dx_wind_2/max_rf_dx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Right Rectus Femoris')
+
+subplot(3,2,5)
+plot((t_emg_wind_sx_2-t_emg_wind_sx_2(1))./(t_emg_wind_sx_2(end)-t_emg_wind_sx_2(1)), bf_sx_wind_2/max_bf_sx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Left Biceps Femoris')
+
+subplot(3,2,6)
+plot((t_emg_wind_dx_2-t_emg_wind_dx_2(1))./(t_emg_wind_dx_2(end)-t_emg_wind_dx_2(1)),bf_dx_wind_2/max_bf_dx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Right Biceps Femoris')
+sgtitle('RF BF, hip flex/ext - window 2')
+
+
+
+
+% ---- window 3 ----
+figure
+subplot(3,2,1)
+plot((t_l_wind_3-t_l_wind_3(1))./(t_l_wind_3(end)-t_l_wind_3(1)), l_hip_ext_flex_wind_3,'Color',[0.85 0.33 0.1])
+text(0.88,0.95*max(l_hip_ext_flex_wind_3),'flex')
+text(0.88,0.95*min(l_hip_ext_flex_wind_3),'ext')
+xline((t_toff_sx_wind_3-t_l_wind_3(1))./(t_l_wind_3(end)-t_l_wind_3(1)),'--','Color',[0 0 0],'LineWidth',1.5)
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('Left Hip flexion-extension')
+
+subplot(3,2,2)
+plot((t_r_wind_3-t_r_wind_3(1))./(t_r_wind_3(end)-t_r_wind_3(1)), r_hip_ext_flex_wind_3,'Color',[0.85 0.33 0.1])
+text(0.88,0.95*max(r_hip_ext_flex_wind_3),'flex')
+text(0.88,0.95*min(r_hip_ext_flex_wind_3),'ext')
+xline((t_toff_dx_wind_3-t_r_wind_3(1))./(t_r_wind_3(end)-t_r_wind_3(1)),'--','Color',[0 0 0],'LineWidth',1.5)
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('Right Hip flexion-extension')
+
+subplot(3,2,3)
+plot((t_emg_wind_sx_3-t_emg_wind_sx_3(1))./(t_emg_wind_sx_3(end)-t_emg_wind_sx_3(1)), rf_sx_wind_3/max_rf_sx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Left Rectus Femoris')
+
+subplot(3,2,4)
+plot((t_emg_wind_dx_3-t_emg_wind_dx_3(1))./(t_emg_wind_dx_3(end)-t_emg_wind_dx_3(1)),rf_dx_wind_3/max_rf_dx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Right Rectus Femoris')
+
+subplot(3,2,5)
+plot((t_emg_wind_sx_3-t_emg_wind_sx_3(1))./(t_emg_wind_sx_3(end)-t_emg_wind_sx_3(1)), bf_sx_wind_3/max_bf_sx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Left Biceps Femoris')
+
+subplot(3,2,6)
+plot((t_emg_wind_dx_3-t_emg_wind_dx_3(1))./(t_emg_wind_dx_3(end)-t_emg_wind_dx_3(1)),bf_dx_wind_3/max_bf_dx)
+xlabel('gait [%]')
+ylabel('activation [%]')
+title('Right Biceps Femoris')
+sgtitle('RF BF, hip flex/ext - window 3')
+
+
+
+
+
+%% ===== achilles tendonopathy (knee int/ext rot) =====
+% nel fase di appoggio a terra (stance phase) chi ha avuto questo tipo
+% d'infortunio mostra una minore peak knee internal rotation
+% 3.1 deg vs 7.3 deg
+
+figure
+subplot(3,2,1)
+plot((t_l_wind_1-t_l_wind_1(1))./(t_l_wind_1(end)-t_l_wind_1(1)), l_knee_int_ext_rot_wind_1,'Color',[0.85 0.33 0.1])
+xlim([0 (t_toff_sx_wind_1-t_l_wind_1(1))./(t_l_wind_1(end)-t_l_wind_1(1))])
+text(0.88*(t_toff_sx_wind_1-t_l_wind_1(1))./(t_l_wind_1(end)-t_l_wind_1(1)),0.95*max(l_knee_int_ext_rot_wind_1),'int')
+text(0.88*(t_toff_sx_wind_1-t_l_wind_1(1))./(t_l_wind_1(end)-t_l_wind_1(1)),0.85*min(l_knee_int_ext_rot_wind_1),'ext')
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('left knee window 1')
+
+subplot(3,2,2)
+plot((t_r_wind_1-t_r_wind_1(1))./(t_r_wind_1(end)-t_r_wind_1(1)), r_knee_int_ext_rot_wind_1,'Color',[0.85 0.33 0.1])
+xlim([0 (t_toff_dx_wind_1-t_r_wind_1(1))./(t_r_wind_1(end)-t_r_wind_1(1))])
+text(0.88*(t_toff_dx_wind_1-t_r_wind_1(1))./(t_r_wind_1(end)-t_r_wind_1(1)),0.95*max(r_knee_int_ext_rot_wind_1),'int')
+text(0.88*(t_toff_dx_wind_1-t_r_wind_1(1))./(t_r_wind_1(end)-t_r_wind_1(1)),0.85*min(r_knee_int_ext_rot_wind_1),'ext')
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('right knee window 1')
+
+subplot(3,2,3)
+plot((t_l_wind_2-t_l_wind_2(1))./(t_l_wind_2(end)-t_l_wind_2(1)), l_knee_int_ext_rot_wind_2,'Color',[0.85 0.33 0.1])
+xlim([0 (t_toff_sx_wind_2-t_l_wind_2(1))./(t_l_wind_2(end)-t_l_wind_2(1))])
+text(0.88*(t_toff_sx_wind_2-t_l_wind_2(1))./(t_l_wind_2(end)-t_l_wind_2(1)),0.95*max(l_knee_int_ext_rot_wind_2),'int')
+text(0.88*(t_toff_sx_wind_2-t_l_wind_2(1))./(t_l_wind_2(end)-t_l_wind_2(1)),0.85*min(l_knee_int_ext_rot_wind_2),'ext')
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('left knee window 2')
+
+subplot(3,2,4)
+plot((t_r_wind_2-t_r_wind_2(1))./(t_r_wind_2(end)-t_r_wind_2(1)), r_knee_int_ext_rot_wind_2,'Color',[0.85 0.33 0.1])
+xlim([0 (t_toff_dx_wind_2-t_r_wind_2(1))./(t_r_wind_2(end)-t_r_wind_2(1))])
+text(0.88*(t_toff_dx_wind_2-t_r_wind_2(1))./(t_r_wind_2(end)-t_r_wind_2(1)),0.95*max(r_knee_int_ext_rot_wind_2),'int')
+text(0.88*(t_toff_dx_wind_2-t_r_wind_2(1))./(t_r_wind_2(end)-t_r_wind_2(1)),0.85*min(r_knee_int_ext_rot_wind_2),'ext')
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('right knee window 2')
+
+subplot(3,2,5)
+plot((t_l_wind_3-t_l_wind_3(1))./(t_l_wind_3(end)-t_l_wind_3(1)), l_knee_int_ext_rot_wind_3,'Color',[0.85 0.33 0.1])
+xlim([0 (t_toff_sx_wind_3-t_l_wind_3(1))./(t_l_wind_3(end)-t_l_wind_3(1))])
+text(0.88*(t_toff_sx_wind_3-t_l_wind_3(1))./(t_l_wind_3(end)-t_l_wind_3(1)),0.95*max(l_knee_int_ext_rot_wind_3),'int')
+text(0.88*(t_toff_sx_wind_3-t_l_wind_3(1))./(t_l_wind_3(end)-t_l_wind_3(1)),0.85*min(l_knee_int_ext_rot_wind_3),'ext')
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('left knee window 3')
+
+subplot(3,2,6)
+plot((t_r_wind_3-t_r_wind_3(1))./(t_r_wind_3(end)-t_r_wind_3(1)), r_knee_int_ext_rot_wind_3,'Color',[0.85 0.33 0.1])
+xlim([0 (t_toff_dx_wind_3-t_r_wind_3(1))./(t_r_wind_3(end)-t_r_wind_3(1))])
+text(0.88*(t_toff_dx_wind_3-t_r_wind_3(1))./(t_r_wind_3(end)-t_r_wind_3(1)),0.95*max(r_knee_int_ext_rot_wind_3),'int')
+text(0.88*(t_toff_dx_wind_3-t_r_wind_3(1))./(t_r_wind_3(end)-t_r_wind_3(1)),0.85*min(r_knee_int_ext_rot_wind_3),'ext')
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('right knee window 3')
+sgtitle('Internal-External rotation of the knee in the stance phase')
+
+a = max(r_knee_int_ext_rot_wind_1(1:find(t_r_wind_1>=t_toff_dx_wind_1,1)));
+b = max(r_knee_int_ext_rot_wind_2(1:find(t_r_wind_2>=t_toff_dx_wind_2,1)));
+c = max(r_knee_int_ext_rot_wind_3(1:find(t_r_wind_3>=t_toff_dx_wind_3,1)));
+peak_int_rot_dx_knee = mean([a b c]);
+
+a = max(l_knee_int_ext_rot_wind_1(1:find(t_l_wind_1>=t_toff_sx_wind_1,1)));
+b = max(l_knee_int_ext_rot_wind_2(1:find(t_l_wind_2>=t_toff_sx_wind_2,1)));
+c = max(l_knee_int_ext_rot_wind_3(1:find(t_l_wind_3>=t_toff_sx_wind_3,1)));
+peak_int_rot_sx_knee = mean([a b c]);
+
+
+
+%% ===== patellofemoral pain (hip ad/abd int/ext rot) =====
+% chi sviluppa patellofemoral pain ha un peak hip adduction angle durante
+% la stance phase maggiore rispetto a un atleta "sano". 
+% 12.1 deg vs 8.1 deg
+
+figure
+subplot(3,2,1)
+plot((t_l_wind_1-t_l_wind_1(1))./(t_l_wind_1(end)-t_l_wind_1(1)), l_hip_ad_abd_wind_1*-1,'Color',[0.85 0.33 0.1])
+xlim([0 (t_toff_sx_wind_1-t_l_wind_1(1))./(t_l_wind_1(end)-t_l_wind_1(1))])
+text(0.88*(t_toff_sx_wind_1-t_l_wind_1(1))./(t_l_wind_1(end)-t_l_wind_1(1)),0.95*max(l_hip_ad_abd_wind_1*-1),'ad')
+text(0.88*(t_toff_sx_wind_1-t_l_wind_1(1))./(t_l_wind_1(end)-t_l_wind_1(1)),0.95*min(l_hip_ad_abd_wind_1),'')
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('left hip window 1')
+
+subplot(3,2,2)
+plot((t_r_wind_1-t_r_wind_1(1))./(t_r_wind_1(end)-t_r_wind_1(1)),r_hip_ad_abd_wind_1*-1,'Color',[0.85 0.33 0.1])
+xlim([0 (t_toff_dx_wind_1-t_r_wind_1(1))./(t_r_wind_1(end)-t_r_wind_1(1))])
+text(0.88*(t_toff_dx_wind_1-t_r_wind_1(1))./(t_r_wind_1(end)-t_r_wind_1(1)),0.95*max(r_hip_ad_abd_wind_1*-1),'ad')
+text(0.88*(t_toff_dx_wind_1-t_r_wind_1(1))./(t_r_wind_1(end)-t_r_wind_1(1)),0.95*min(r_hip_ad_abd_wind_1),'')
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('right hip window 1')
+
+subplot(3,2,3)
+plot((t_l_wind_2-t_l_wind_2(1))./(t_l_wind_2(end)-t_l_wind_2(1)), l_hip_ad_abd_wind_2*-1,'Color',[0.85 0.33 0.1])
+xlim([0 (t_toff_sx_wind_2-t_l_wind_2(1))./(t_l_wind_2(end)-t_l_wind_2(1))])
+text(0.88*(t_toff_sx_wind_2-t_l_wind_2(1))./(t_l_wind_2(end)-t_l_wind_2(1)),0.95*max(l_hip_ad_abd_wind_2*-1),'ad')
+text(0.88*(t_toff_sx_wind_2-t_l_wind_2(1))./(t_l_wind_2(end)-t_l_wind_2(1)),0.95*min(l_hip_ad_abd_wind_2),'')
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('left hip window 2')
+
+subplot(3,2,4)
+plot((t_r_wind_2-t_r_wind_2(1))./(t_r_wind_2(end)-t_r_wind_2(1)), r_hip_ad_abd_wind_2*-1,'Color',[0.85 0.33 0.1])
+xlim([0 (t_toff_dx_wind_2-t_r_wind_2(1))./(t_r_wind_2(end)-t_r_wind_2(1))])
+text(0.88*(t_toff_dx_wind_2-t_r_wind_2(1))./(t_r_wind_2(end)-t_r_wind_2(1)),0.95*max(r_hip_ad_abd_wind_2*-1),'ad')
+text(0.88*(t_toff_dx_wind_2-t_r_wind_2(1))./(t_r_wind_2(end)-t_r_wind_2(1)),0.95*min(r_hip_ad_abd_wind_2),'')
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('right hip window 2')
+
+subplot(3,2,5)
+plot((t_l_wind_3-t_l_wind_3(1))./(t_l_wind_3(end)-t_l_wind_3(1)), l_hip_ad_abd_wind_3*-1,'Color',[0.85 0.33 0.1])
+xlim([0 (t_toff_sx_wind_3-t_l_wind_3(1))./(t_l_wind_3(end)-t_l_wind_3(1))])
+text(0.88*(t_toff_sx_wind_3-t_l_wind_3(1))./(t_l_wind_3(end)-t_l_wind_3(1)),0.95*max(l_hip_ad_abd_wind_3*-1),'ad')
+text(0.88*(t_toff_sx_wind_3-t_l_wind_3(1))./(t_l_wind_3(end)-t_l_wind_3(1)),0.95*min(l_hip_ad_abd_wind_3),'')
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('left hip window 3')
+
+subplot(3,2,6)
+plot((t_r_wind_3-t_r_wind_3(1))./(t_r_wind_3(end)-t_r_wind_3(1)), r_hip_ad_abd_wind_3*-1,'Color',[0.85 0.33 0.1])
+xlim([0 (t_toff_dx_wind_3-t_r_wind_3(1))./(t_r_wind_3(end)-t_r_wind_3(1))])
+text(0.88*(t_toff_dx_wind_3-t_r_wind_3(1))./(t_r_wind_3(end)-t_r_wind_3(1)),0.95*max(r_hip_ad_abd_wind_3*-1),'ad')
+text(0.88*(t_toff_dx_wind_3-t_r_wind_3(1))./(t_r_wind_3(end)-t_r_wind_3(1)),0.95*min(r_hip_ad_abd_wind_3),'')
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('right hip window 3')
+sgtitle('Adduction-Abduction of the hip in the stance phase')
+
+a = max(r_hip_ad_abd_wind_1(1:find(t_r_wind_1>=t_toff_dx_wind_1,1)));
+b = max(r_hip_ad_abd_wind_2(1:find(t_r_wind_2>=t_toff_dx_wind_2,1)));
+c = max(r_hip_ad_abd_wind_3(1:find(t_r_wind_3>=t_toff_dx_wind_3,1)));
+peak_ad_dx_hip = mean([a b c]);
+
+a = max(l_hip_ad_abd_wind_1(1:find(t_r_wind_1>=t_toff_dx_wind_1,1)));
+b = max(l_hip_ad_abd_wind_2(1:find(t_r_wind_2>=t_toff_dx_wind_2,1)));
+c = max(l_hip_ad_abd_wind_3(1:find(t_r_wind_3>=t_toff_dx_wind_3,1)));
+peak_ad_sx_hip = mean([a b c]);
+
+
+
+% chi sviluppa patellofemoral pain ha un peak hip internal rotation angle durante
+% la stance phase maggiore rispetto a un atleta "sano". 
+% 11.8 deg vs 4.2 deg
+
+figure
+subplot(3,2,1)
+plot((t_l_wind_1-t_l_wind_1(1))./(t_l_wind_1(end)-t_l_wind_1(1)), l_hip_int_ext_rot_wind_1,'Color',[0.85 0.33 0.1])
+xlim([0 (t_toff_sx_wind_1-t_l_wind_1(1))./(t_l_wind_1(end)-t_l_wind_1(1))])
+text(0.88*(t_toff_sx_wind_1-t_l_wind_1(1))./(t_l_wind_1(end)-t_l_wind_1(1)),0.95*max(l_hip_int_ext_rot_wind_1),'int')
+text(0.88*(t_toff_sx_wind_1-t_l_wind_1(1))./(t_l_wind_1(end)-t_l_wind_1(1)),0.95*min(l_hip_int_ext_rot_wind_1),'ext')
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('left hip window 1')
+
+subplot(3,2,2)
+plot((t_r_wind_1-t_r_wind_1(1))./(t_r_wind_1(end)-t_r_wind_1(1)),r_hip_int_ext_rot_wind_1,'Color',[0.85 0.33 0.1])
+xlim([0 (t_toff_dx_wind_1-t_r_wind_1(1))./(t_r_wind_1(end)-t_r_wind_1(1))])
+text(0.88*(t_toff_dx_wind_1-t_r_wind_1(1))./(t_r_wind_1(end)-t_r_wind_1(1)),0.95*max(r_hip_int_ext_rot_wind_1),'int')
+text(0.88*(t_toff_dx_wind_1-t_r_wind_1(1))./(t_r_wind_1(end)-t_r_wind_1(1)),0.95*min(r_hip_int_ext_rot_wind_1),'ext')
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('right hip window 1')
+
+subplot(3,2,3)
+plot((t_l_wind_2-t_l_wind_2(1))./(t_l_wind_2(end)-t_l_wind_2(1)), l_hip_int_ext_rot_wind_2,'Color',[0.85 0.33 0.1])
+xlim([0 (t_toff_sx_wind_2-t_l_wind_2(1))./(t_l_wind_2(end)-t_l_wind_2(1))])
+text(0.88*(t_toff_sx_wind_2-t_l_wind_2(1))./(t_l_wind_2(end)-t_l_wind_2(1)),0.95*max(l_hip_int_ext_rot_wind_2),'int')
+text(0.88*(t_toff_sx_wind_2-t_l_wind_2(1))./(t_l_wind_2(end)-t_l_wind_2(1)),0.95*min(l_hip_int_ext_rot_wind_2),'ext')
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('left hip window 2')
+
+subplot(3,2,4)
+plot((t_r_wind_2-t_r_wind_2(1))./(t_r_wind_2(end)-t_r_wind_2(1)), r_hip_int_ext_rot_wind_2,'Color',[0.85 0.33 0.1])
+xlim([0 (t_toff_dx_wind_2-t_r_wind_2(1))./(t_r_wind_2(end)-t_r_wind_2(1))])
+text(0.88*(t_toff_dx_wind_2-t_r_wind_2(1))./(t_r_wind_2(end)-t_r_wind_2(1)),0.95*max(r_hip_int_ext_rot_wind_2),'int')
+text(0.88*(t_toff_dx_wind_2-t_r_wind_2(1))./(t_r_wind_2(end)-t_r_wind_2(1)),0.95*min(r_hip_int_ext_rot_wind_2),'ext')
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('right hip window 2')
+
+subplot(3,2,5)
+plot((t_l_wind_3-t_l_wind_3(1))./(t_l_wind_3(end)-t_l_wind_3(1)), l_hip_int_ext_rot_wind_3,'Color',[0.85 0.33 0.1])
+xlim([0 (t_toff_sx_wind_3-t_l_wind_3(1))./(t_l_wind_3(end)-t_l_wind_3(1))])
+text(0.88*(t_toff_sx_wind_3-t_l_wind_3(1))./(t_l_wind_3(end)-t_l_wind_3(1)),0.95*max(l_hip_int_ext_rot_wind_3),'int')
+text(0.88*(t_toff_sx_wind_3-t_l_wind_3(1))./(t_l_wind_3(end)-t_l_wind_3(1)),0.95*min(l_hip_int_ext_rot_wind_3),'ext')
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('left hip window 3')
+
+subplot(3,2,6)
+plot((t_r_wind_3-t_r_wind_3(1))./(t_r_wind_3(end)-t_r_wind_3(1)), r_hip_int_ext_rot_wind_3,'Color',[0.85 0.33 0.1])
+xlim([0 (t_toff_dx_wind_3-t_r_wind_3(1))./(t_r_wind_3(end)-t_r_wind_3(1))])
+text(0.88*(t_toff_dx_wind_3-t_r_wind_3(1))./(t_r_wind_3(end)-t_r_wind_3(1)),0.95*max(r_hip_int_ext_rot_wind_3),'int')
+text(0.88*(t_toff_dx_wind_3-t_r_wind_3(1))./(t_r_wind_3(end)-t_r_wind_3(1)),0.95*min(r_hip_int_ext_rot_wind_3),'ext')
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('right hip window 3')
+sgtitle('Internal-Extertnal rotation of the hip in the stance phase')
+
+a = max(r_hip_int_ext_rot_wind_1(1:find(t_r_wind_1>=t_toff_dx_wind_1,1)));
+b = max(r_hip_int_ext_rot_wind_2(1:find(t_r_wind_2>=t_toff_dx_wind_2,1)));
+c = max(r_hip_int_ext_rot_wind_3(1:find(t_r_wind_3>=t_toff_dx_wind_3,1)));
+peak_int_rot_dx_hip = mean([a b c]);
+
+a = max(l_hip_int_ext_rot_wind_1(1:find(t_r_wind_1>=t_toff_dx_wind_1,1)));
+b = max(l_hip_int_ext_rot_wind_2(1:find(t_r_wind_2>=t_toff_dx_wind_2,1)));
+c = max(l_hip_int_ext_rot_wind_3(1:find(t_r_wind_3>=t_toff_dx_wind_3,1)));
+peak_int_rot_sx_hip = mean([a b c]);
+
+
+
+%% ===== iliotibial band syndrome =====
+% tutti gli angoli qui riportati fanno riferimento alla stance phase
+
+%% ------- female -------
+% hanno una peak hip adduction angle più grande rispetto ai soggetti "sani", 
+% tale angolo è già stato calcolato nella sezione patellofemoral pain. 
+% 10.39 deg vs 7.92 deg
+
+
+% hanno un peak knee internal rotation angle più grande rispetto ai soggetti "sani",
+% anche quest'angolo è già stato calcolato nella sezione achilles 
+% tendonopathy (dove però ad essere pericoloso era un peak angle più piccolo). 
+% 1.75 deg vs -1.14 deg
+
+
+
+%% ------- male (knee ad/abd) -------
+% hanno un peak hip internal rotation angle più grande rispetto ai soggetti "sani",
+% angolo già calcolato nella sezione patellofemoral pain. 
+% 13.3 deg vs 9.6 deg
+
+% hanno un peak knee adduction angle più grande rispetto ai soggetti "sani",
+% 7.3 deg vs 3.7 deg
+figure
+subplot(3,2,1)
+plot((t_l_wind_1-t_l_wind_1(1))./(t_l_wind_1(end)-t_l_wind_1(1)), l_knee_ad_abd_wind_1,'Color',[0.85 0.33 0.1])
+xlim([0 (t_toff_sx_wind_1-t_l_wind_1(1))./(t_l_wind_1(end)-t_l_wind_1(1))])
+text(0.88*(t_toff_sx_wind_1-t_l_wind_1(1))./(t_l_wind_1(end)-t_l_wind_1(1)),0.95*max(l_knee_ad_abd_wind_1),'ad')
+text(0.88*(t_toff_sx_wind_1-t_l_wind_1(1))./(t_l_wind_1(end)-t_l_wind_1(1)),0.95*min(l_knee_ad_abd_wind_1),'abd')
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('left knee window 1')
+
+subplot(3,2,2)
+plot((t_r_wind_1-t_r_wind_1(1))./(t_r_wind_1(end)-t_r_wind_1(1)),r_knee_ad_abd_wind_1,'Color',[0.85 0.33 0.1])
+xlim([0 (t_toff_dx_wind_1-t_r_wind_1(1))./(t_r_wind_1(end)-t_r_wind_1(1))])
+text(0.88*(t_toff_dx_wind_1-t_r_wind_1(1))./(t_r_wind_1(end)-t_r_wind_1(1)),0.95*max(r_knee_ad_abd_wind_1),'ad')
+text(0.88*(t_toff_dx_wind_1-t_r_wind_1(1))./(t_r_wind_1(end)-t_r_wind_1(1)),0.95*min(r_knee_ad_abd_wind_1),'abd')
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('right knee window 1')
+
+subplot(3,2,3)
+plot((t_l_wind_2-t_l_wind_2(1))./(t_l_wind_2(end)-t_l_wind_2(1)), l_knee_ad_abd_wind_2,'Color',[0.85 0.33 0.1])
+xlim([0 (t_toff_sx_wind_2-t_l_wind_2(1))./(t_l_wind_2(end)-t_l_wind_2(1))])
+text(0.88*(t_toff_sx_wind_2-t_l_wind_2(1))./(t_l_wind_2(end)-t_l_wind_2(1)),0.95*max(l_knee_ad_abd_wind_2),'ad')
+text(0.88*(t_toff_sx_wind_2-t_l_wind_2(1))./(t_l_wind_2(end)-t_l_wind_2(1)),0.95*min(l_knee_ad_abd_wind_2),'abd')
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('left knee window 2')
+
+subplot(3,2,4)
+plot((t_r_wind_2-t_r_wind_2(1))./(t_r_wind_2(end)-t_r_wind_2(1)), r_knee_ad_abd_wind_2,'Color',[0.85 0.33 0.1])
+xlim([0 (t_toff_dx_wind_2-t_r_wind_2(1))./(t_r_wind_2(end)-t_r_wind_2(1))])
+text(0.88*(t_toff_dx_wind_2-t_r_wind_2(1))./(t_r_wind_2(end)-t_r_wind_2(1)),0.95*max(r_knee_ad_abd_wind_2),'ad')
+text(0.88*(t_toff_dx_wind_2-t_r_wind_2(1))./(t_r_wind_2(end)-t_r_wind_2(1)),0.95*min(r_knee_ad_abd_wind_2),'abd')
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('right knee window 2')
+
+subplot(3,2,5)
+plot((t_l_wind_3-t_l_wind_3(1))./(t_l_wind_3(end)-t_l_wind_3(1)), l_knee_ad_abd_wind_3,'Color',[0.85 0.33 0.1])
+xlim([0 (t_toff_sx_wind_3-t_l_wind_3(1))./(t_l_wind_3(end)-t_l_wind_3(1))])
+text(0.88*(t_toff_sx_wind_3-t_l_wind_3(1))./(t_l_wind_3(end)-t_l_wind_3(1)),0.95*max(l_knee_ad_abd_wind_3),'ad')
+text(0.88*(t_toff_sx_wind_3-t_l_wind_3(1))./(t_l_wind_3(end)-t_l_wind_3(1)),0.95*min(l_knee_ad_abd_wind_3),'abd')
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('left knee window 3')
+
+subplot(3,2,6)
+plot((t_r_wind_3-t_r_wind_3(1))./(t_r_wind_3(end)-t_r_wind_3(1)), r_knee_ad_abd_wind_3,'Color',[0.85 0.33 0.1])
+xlim([0 (t_toff_dx_wind_3-t_r_wind_3(1))./(t_r_wind_3(end)-t_r_wind_3(1))])
+text(0.88*(t_toff_dx_wind_3-t_r_wind_3(1))./(t_r_wind_3(end)-t_r_wind_3(1)),0.95*max(r_knee_ad_abd_wind_3),'ad')
+text(0.88*(t_toff_dx_wind_3-t_r_wind_3(1))./(t_r_wind_3(end)-t_r_wind_3(1)),0.95*min(r_knee_ad_abd_wind_3),'abd')
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('right knee window 3')
+sgtitle('Adduction-Abduction of the knee in the stance phase')
+
+a = max(r_knee_ad_abd_wind_1(1:find(t_r_wind_1>=t_toff_dx_wind_1,1)));
+b = max(r_knee_ad_abd_wind_2(1:find(t_r_wind_2>=t_toff_dx_wind_2,1)));
+c = max(r_knee_ad_abd_wind_3(1:find(t_r_wind_3>=t_toff_dx_wind_3,1)));
+peak_ad_dx_knee = mean([a b c]);
+
+a = max(l_knee_ad_abd_wind_1(1:find(t_l_wind_1>=t_toff_sx_wind_1,1)));
+b = max(l_knee_ad_abd_wind_2(1:find(t_l_wind_2>=t_toff_sx_wind_2,1)));
+c = max(l_knee_ad_abd_wind_3(1:find(t_l_wind_3>=t_toff_sx_wind_3,1)));
+peak_ad_sx_knee = mean([a b c]);
+
+
+
+%% ===== tibial stress fracture =====
+% hanno una maggiore peak hip adduction angle durante la stance phase
+% rispetto ai soggetti "sani", angolo già valutato nella sezione
+% patellofemoral pain.
+% 11.6 deg vs 8.1 deg
+
+
+
+
+%% ===== general injuries (pelv contralateral tilt) =====
+% soggetti con patellofemoral pain, iliotibial band syndrome, medial tibial 
+% stress syndrome, o Achilles tendinopathy hanno mostrato un peak hip
+% adduction angle maggiore nella stance phase (già valutato) e un maggiore
+% pelvic drop angle
+% 6.4 deg vs 3.7 deg
+
+% nel momento in cui un piede è a terra l'abbassamento avviene sul lato
+% opposto. Per esempio durante la fase di appoggio del piede sx il bacino
+% si abbasserà verso il lato dx. 
+
+pelv_tilt_mean = mean(pelv_tilt(1:3000));
+pelv_tilt = pelv_tilt - pelv_tilt_mean;
+figure
+a(1) = subplot(3,1,1);
+plot(t,l_knee_ext_flex,'Color',[0.85 0.33 0.1])
+xlim([0 50])
+xlabel('time [s]')
+ylabel('angle [deg]')
+title('Left Knee Flexion-Extension')
+
+a(2) = subplot(3,1,2);
+plot(t,r_knee_ext_flex,'Color',[0.85 0.33 0.1])
+xlim([0 50])
+xlabel('time [s]')
+ylabel('angle [deg]')
+title('Right Knee Flexion-Extension')
+
+a(3) = subplot(3,1,3);
+plot(t,pelv_tilt)
+yline(0)
+xlim([0 50])
+xlabel('time [s]')
+ylabel('angle [deg]')
+title('Contralateral Pelvic Tilt')
+linkaxes(a,'x')
+
+% qui abbiamo valori positivi per abbassamenti del lato dx e valori
+% negativi per abbassamenti del lato sx.
+
+% presta attenzione che un maggior abbassamento di un lato è dovuto a una
+% debolezza del gluteo opposto. Ad esempio se si abbassa di più il lato sx
+% è consigliato rafforzare soprattutto il gluteo dx. 
+
+[peak_drop_sx,ind_1] = mink(pelv_tilt(1:3000),30);
+peak_drop_sx_avg = mean(peak_drop_sx);
+[peak_drop_dx ,ind_2]= maxk(pelv_tilt(1:3000),30);
+peak_drop_dx_avg = mean(peak_drop_dx);
+
+
+
+
+
+
+
+
+%% ===== Symmetry =====
+%% ------- knee flex/ext -------
+a(1) = length(r_knee_ext_flex_wind_1);
+a(2) = length(r_knee_ext_flex_wind_2);
+a(3) = length(r_knee_ext_flex_wind_3);
+
+for i=1:min(a)
+    min_r_knee(i)=min([r_knee_ext_flex_wind_1(i) ...
+        r_knee_ext_flex_wind_2(i) r_knee_ext_flex_wind_3(i)]);
+    max_r_knee(i)=max([r_knee_ext_flex_wind_1(i) ...
+        r_knee_ext_flex_wind_2(i) r_knee_ext_flex_wind_3(i)]);
+    mean_r_knee(i)=mean([r_knee_ext_flex_wind_1(i) ...
+        r_knee_ext_flex_wind_2(i) r_knee_ext_flex_wind_3(i)]);
+end
+
+[~,index]=min(a);
+if index == 1
+    t_ax_r = t_r_wind_1;
+elseif index == 2
+    t_ax_r = t_r_wind_2;
+else
+    t_ax_r = t_r_wind_3;
+end
+
+
+a(1) = length(l_knee_ext_flex_wind_1);
+a(2) = length(l_knee_ext_flex_wind_2);
+a(3) = length(l_knee_ext_flex_wind_3);
+
+for i=1:min(a)
+    min_l_knee(i)=min([l_knee_ext_flex_wind_1(i) ...
+        l_knee_ext_flex_wind_2(i) l_knee_ext_flex_wind_3(i)]);
+    max_l_knee(i)=max([l_knee_ext_flex_wind_1(i) ...
+        l_knee_ext_flex_wind_2(i) l_knee_ext_flex_wind_3(i)]);
+    mean_l_knee(i)=mean([l_knee_ext_flex_wind_1(i) ...
+        l_knee_ext_flex_wind_2(i) l_knee_ext_flex_wind_3(i)]);
+end
+
+[~,index]=min(a);
+if index == 1
+    t_ax_l = t_l_wind_1;
+    t_ax_toff = t_toff_sx_wind_1;
+elseif index == 2
+    t_ax_l = t_l_wind_2;
+    t_ax_toff = t_toff_sx_wind_2;
+else
+    t_ax_l = t_l_wind_3;
+    t_ax_toff = t_toff_sx_wind_3;
+end
+
+a(1) = length(mean_r_knee);
+a(2) = length(mean_l_knee);
+if a(1) >= a(2)
+    t_si = t_ax_l;
+else
+    t_si = t_ax_r;
+end
+
+i = min(a);
+
+SI_knee = (2./(max(mean_r_knee)-min(mean_r_knee) + (max(mean_l_knee)-min(mean_l_knee))))...
+.*abs(mean_r_knee(1:i)-mean_l_knee(1:i));
+SI_knee_mean = mean(SI_knee);
+
+figure 
+subplot(1,2,1)
+hold on 
+fill([(t_ax_r-t_ax_r(1))./(t_ax_r(end)-t_ax_r(1)) fliplr((t_ax_r-t_ax_r(1))./(t_ax_r(end)-t_ax_r(1)))], ...
+    [min_r_knee fliplr(max_r_knee)],[0.9 0.45 0],'EdgeColor','none','FaceAlpha',0.2);
+plot((t_ax_r-t_ax_r(1))./(t_ax_r(end)-t_ax_r(1)),mean_r_knee,'Color',[0.9 0.45 0],'LineWidth',1.5)
+fill([(t_ax_l-t_ax_l(1))./(t_ax_l(end)-t_ax_l(1)) fliplr((t_ax_l-t_ax_l(1))./(t_ax_l(end)-t_ax_l(1)))], ...
+    [min_l_knee fliplr(max_l_knee)],[0 0.25 0.6],'EdgeColor','none','FaceAlpha',0.2);
+plot((t_ax_l-t_ax_l(1))./(t_ax_l(end)-t_ax_l(1)),mean_l_knee,'Color',[0 0.25 0.6],'LineWidth',1.5)
+xline((t_ax_toff-t_ax_l(1))./(t_ax_l(end)-t_ax_l(1)),'--')
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('knee flexion-extension')
+legend('','right leg','','left leg','takeoff')
+
+subplot(1,2,2)
+plot((t_si-t_si(1))./(t_si(end)-t_si(1)),SI_knee)
+yline(SI_knee_mean,'--')
+xlabel('gait [%]')
+ylabel('symmetri index [%]')
+title('symmetry index across the gait')
+legend('symmetry function','mean symmetry value')
+
+
+
+
+%% ------- ankle plantar/dorsi flex -------
+a(1) = length(r_ankle_ext_flex_wind_1);
+a(2) = length(r_ankle_ext_flex_wind_2);
+a(3) = length(r_ankle_ext_flex_wind_3);
+
+for i=1:min(a)
+    min_r_ankle(i)=min([r_ankle_ext_flex_wind_1(i) ...
+        r_ankle_ext_flex_wind_2(i) r_ankle_ext_flex_wind_3(i)]);
+    max_r_ankle(i)=max([r_ankle_ext_flex_wind_1(i) ...
+        r_ankle_ext_flex_wind_2(i) r_ankle_ext_flex_wind_3(i)]);
+    mean_r_ankle(i)=mean([r_ankle_ext_flex_wind_1(i) ...
+        r_ankle_ext_flex_wind_2(i) r_ankle_ext_flex_wind_3(i)]);
+end
+
+[~,index]=min(a);
+if index == 1
+    t_ax_r = t_r_wind_1;
+elseif index == 2
+    t_ax_r = t_r_wind_2;
+else
+    t_ax_r = t_r_wind_3;
+end
+
+
+a(1) = length(l_ankle_ext_flex_wind_1);
+a(2) = length(l_ankle_ext_flex_wind_2);
+a(3) = length(l_ankle_ext_flex_wind_3);
+
+for i=1:min(a)
+    min_l_ankle(i)=min([l_ankle_ext_flex_wind_1(i) ...
+        l_ankle_ext_flex_wind_2(i) l_ankle_ext_flex_wind_3(i)]);
+    max_l_ankle(i)=max([l_ankle_ext_flex_wind_1(i) ...
+        l_ankle_ext_flex_wind_2(i) l_ankle_ext_flex_wind_3(i)]);
+    mean_l_ankle(i)=mean([l_ankle_ext_flex_wind_1(i) ...
+        l_ankle_ext_flex_wind_2(i) l_ankle_ext_flex_wind_3(i)]);
+end
+
+[~,index]=min(a);
+if index == 1
+    t_ax_l = t_l_wind_1;
+    t_ax_toff = t_toff_sx_wind_1;
+elseif index == 2
+    t_ax_l = t_l_wind_2;
+    t_ax_toff = t_toff_sx_wind_2;
+else
+    t_ax_l = t_l_wind_3;
+    t_ax_toff = t_toff_sx_wind_3;
+end
+
+a(1) = length(mean_r_ankle);
+a(2) = length(mean_l_ankle);
+if a(1) >= a(2)
+    t_si = t_ax_l;
+else
+    t_si = t_ax_r;
+end
+
+i = min(a);
+
+SI_ankle = (2./(max(mean_r_ankle)-min(mean_r_ankle) + (max(mean_l_ankle)-min(mean_l_ankle))))...
+    .*abs(mean_r_ankle(1:i)-mean_l_ankle(1:i));
+SI_ankle_mean = mean(SI_ankle);
+
+figure 
+subplot(1,2,1)
+hold on 
+fill([(t_ax_r-t_ax_r(1))./(t_ax_r(end)-t_ax_r(1)) fliplr((t_ax_r-t_ax_r(1))./(t_ax_r(end)-t_ax_r(1)))], ...
+    [min_r_ankle fliplr(max_r_ankle)],[0.9 0.45 0],'EdgeColor','none','FaceAlpha',0.2);
+plot((t_ax_r-t_ax_r(1))./(t_ax_r(end)-t_ax_r(1)),mean_r_ankle,'Color',[0.9 0.45 0],'LineWidth',1.5)
+fill([(t_ax_l-t_ax_l(1))./(t_ax_l(end)-t_ax_l(1)) fliplr((t_ax_l-t_ax_l(1))./(t_ax_l(end)-t_ax_l(1)))], ...
+    [min_l_ankle fliplr(max_l_ankle)],[0 0.25 0.6],'EdgeColor','none','FaceAlpha',0.2);
+plot((t_ax_l-t_ax_l(1))./(t_ax_l(end)-t_ax_l(1)),mean_l_ankle,'Color',[0 0.25 0.6],'LineWidth',1.5)
+xline((t_ax_toff-t_ax_l(1))./(t_ax_l(end)-t_ax_l(1)),'--')
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('ankle plantar-dorsi flexion')
+legend('','right leg','','left leg','takeoff')
+
+subplot(1,2,2)
+plot((t_si-t_si(1))./(t_si(end)-t_si(1)),SI_ankle)
+yline(SI_ankle_mean,'--')
+xlabel('gait [%]')
+ylabel('symmetri index [%]')
+title('symmetry index across the gait')
+legend('symmetry function','mean symmetry value')
+
+
+
+
+
+%% ------- hip flex/ext -------
+a(1) = length(r_hip_ext_flex_wind_1);
+a(2) = length(r_hip_ext_flex_wind_2);
+a(3) = length(r_hip_ext_flex_wind_3);
+
+for i=1:min(a)
+    min_r_hip(i)=min([r_hip_ext_flex_wind_1(i) ...
+        r_hip_ext_flex_wind_2(i) r_hip_ext_flex_wind_3(i)]);
+    max_r_hip(i)=max([r_hip_ext_flex_wind_1(i) ...
+        r_hip_ext_flex_wind_2(i) r_hip_ext_flex_wind_3(i)]);
+    mean_r_hip(i)=mean([r_hip_ext_flex_wind_1(i) ...
+        r_hip_ext_flex_wind_2(i) r_hip_ext_flex_wind_3(i)]);
+end
+
+[~,index]=min(a);
+if index == 1
+    t_ax_r = t_r_wind_1;
+elseif index == 2
+    t_ax_r = t_r_wind_2;
+else
+    t_ax_r = t_r_wind_3;
+end
+
+
+a(1) = length(l_hip_ext_flex_wind_1);
+a(2) = length(l_hip_ext_flex_wind_2);
+a(3) = length(l_hip_ext_flex_wind_3);
+
+for i=1:min(a)
+    min_l_hip(i)=min([l_hip_ext_flex_wind_1(i) ...
+        l_hip_ext_flex_wind_2(i) l_hip_ext_flex_wind_3(i)]);
+    max_l_hip(i)=max([l_hip_ext_flex_wind_1(i) ...
+        l_hip_ext_flex_wind_2(i) l_hip_ext_flex_wind_3(i)]);
+    mean_l_hip(i)=mean([l_hip_ext_flex_wind_1(i) ...
+        l_hip_ext_flex_wind_2(i) l_hip_ext_flex_wind_3(i)]);
+end
+
+[~,index]=min(a);
+if index == 1
+    t_ax_l = t_l_wind_1;
+    t_ax_toff = t_toff_sx_wind_1;
+elseif index == 2
+    t_ax_l = t_l_wind_2;
+    t_ax_toff = t_toff_sx_wind_2;
+else
+    t_ax_l = t_l_wind_3;
+    t_ax_toff = t_toff_sx_wind_3;
+end
+
+a(1) = length(mean_r_hip);
+a(2) = length(mean_l_hip);
+if a(1) >= a(2)
+    t_si = t_ax_l;
+else
+    t_si = t_ax_r;
+end
+
+i = min(a);
+
+SI_hip = (2./(max(mean_r_hip)-min(mean_r_hip) + (max(mean_l_hip)-min(mean_l_hip))))...
+    .*abs(mean_r_hip(1:i)-mean_l_hip(1:i));
+SI_hip_mean = mean(SI_hip);
+
+figure 
+subplot(1,2,1)
+hold on 
+fill([(t_ax_r-t_ax_r(1))./(t_ax_r(end)-t_ax_r(1)) fliplr((t_ax_r-t_ax_r(1))./(t_ax_r(end)-t_ax_r(1)))], ...
+    [min_r_hip fliplr(max_r_hip)],[0.9 0.45 0],'EdgeColor','none','FaceAlpha',0.2);
+plot((t_ax_r-t_ax_r(1))./(t_ax_r(end)-t_ax_r(1)),mean_r_hip,'Color',[0.9 0.45 0],'LineWidth',1.5)
+fill([(t_ax_l-t_ax_l(1))./(t_ax_l(end)-t_ax_l(1)) fliplr((t_ax_l-t_ax_l(1))./(t_ax_l(end)-t_ax_l(1)))], ...
+    [min_l_hip fliplr(max_l_hip)],[0 0.25 0.6],'EdgeColor','none','FaceAlpha',0.2);
+plot((t_ax_l-t_ax_l(1))./(t_ax_l(end)-t_ax_l(1)),mean_l_hip,'Color',[0 0.25 0.6],'LineWidth',1.5)
+xline((t_ax_toff-t_ax_l(1))./(t_ax_l(end)-t_ax_l(1)),'--','DisplayName','takeoff')
+xlabel('gait [%]')
+ylabel('angle [deg]')
+title('hip flexion-extension')
+legend('','right leg','','left leg','takeoff')
+
+
+subplot(1,2,2)
+plot((t_si-t_si(1))./(t_si(end)-t_si(1)),SI_hip)
+yline(SI_hip_mean,'--')
+xlabel('gait [%]')
+ylabel('symmetry index [%]')
+title('symmetry index across the gait')
+legend('symmetry function','mean symmetry value')
